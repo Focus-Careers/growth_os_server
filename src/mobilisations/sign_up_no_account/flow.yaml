@@ -1,0 +1,48 @@
+name: "sign_up_no_account"
+start_id: "ask_name"
+
+steps:
+  - id: "ask_name"
+    agent_message_body: "Let's get you signed up. First things first - what's your first name?"
+    type: "free_type"
+    next_id: "ask_email"
+
+  - id: "ask_email"
+    agent_message_body: "And your email?"
+    type: "free_type"
+    next_id: "validate_email"
+
+  - id: "validate_email"
+    type: "validate"
+    checks:
+      - check: "email_format"
+        on_fail: "email_wrong_format"
+      - check: "email_exists"
+        on_fail: "email_already_exists"
+    on_pass: "complete"
+
+  - id: "email_wrong_format"
+    agent_message_body: "Hmm, that doesn't look like a valid email address. Can you try again?"
+    type: "free_type"
+    response_key: "ask_email"
+    next_id: "validate_email"
+
+  - id: "email_already_exists"
+    agent_message_body: "That email is already registered with us. Try a different one?"
+    type: "free_type"
+    response_key: "ask_email"
+    next_id: "validate_email"
+
+  - id: "complete"
+    messages:
+      - "Perfect - thanks. I've sent those to the office administrator who has created your account!"
+      - "Let me quickly log you in..."
+    type: "end_flow"
+
+on_complete:
+  sync: true
+  employee: "office_administrator"
+  skill: "sign_up_no_account"
+  inputs:
+    firstname: "ask_name"
+    email: "ask_email"

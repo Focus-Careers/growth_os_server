@@ -1,0 +1,8 @@
+name: "100_approved_leads_found"
+start_id: "notify"
+
+steps:
+  - id: "notify"
+    type: "end_flow"
+    messages:
+      - "Good news: Belfort has just found the 100th approved lead."

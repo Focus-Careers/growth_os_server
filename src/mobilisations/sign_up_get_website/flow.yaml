@@ -1,0 +1,49 @@
+name: "sign_up_get_website"
+start_id: "welcome"
+
+steps:
+  - id: "welcome"
+    messages:
+      - "OK - great. Thanks, {{user_first_name}}. You're logged into growthOS - welcome!"
+      - "We have a little bit more work to do to get you set up. Firstly, I need some basic details about your organisation - and then I'll work with you to establish an ideal target profile, to establish who you actually want to market to."
+      - "Sound good?"
+    type: "option_set"
+    options:
+      - id: 1
+        message: "Sounds great!"
+    next_id: "ask_org_website"
+
+  - id: "ask_org_website"
+    messages:
+      - "Firstly, if it's OK could I grab your organisation's website?"
+      - "Then I'll ask my lead-generation expert to analyse it and report back. He usually analyses the websites of other companies - but I'll send him yours just to get a quick rundown of what your organisation does."
+    type: "free_type"
+    next_id: "url_checker"
+
+  - id: "url_checker"
+    type: "validate"
+    checks:
+      - check: "url_format"
+        on_fail: "website_url_incorrect"
+    on_pass: "complete"
+
+  - id: "website_url_incorrect"
+    messages:
+      - "That format doesn't quite look right for a website."
+      - "Could you try again?"
+    type: "free_type"
+    response_key: "ask_org_website"
+    next_id: "url_checker"
+
+  - id: "complete"
+    messages:
+      - "OK, give me a second here whilst I ask the lead-gen expert to do his thing."
+    type: "end_flow"
+
+on_complete:
+  employee: "lead_gen_expert"
+  skill: "analyse_website"
+  inputs:
+    website: "ask_org_website"
+
+

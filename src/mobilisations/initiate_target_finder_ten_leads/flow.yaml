@@ -1,0 +1,76 @@
+name: "initiate_target_finder_ten_leads"
+start_id: "initial_message"
+
+steps:
+  - id: "initial_message"
+    type: "ai_message_with_options"
+    prompt_file: "initial_prompt.md"
+    options:
+      - id: 1
+        message: "Yes - sounds good."
+        next_id: "sidebar"
+      - id: 2
+        message: "Not right now."
+        next_id: "complete-not-right-now"
+
+  - id: "sidebar"
+    type: "sidebar"
+    sidebar: "select_itp"
+    messages:
+      - "Perfect. Let's start off by choosing one of your ITP's (ideal target profiles). We'll be finding targets that match this profile."
+    next_id: "check_current_customers"
+
+  - id: "check_current_customers"
+    type: "option_set"
+    messages:
+      - "You currently have {{count_customers_with_account_id}} customers in your current customers database."
+      - "It's important that you update your current customer list so that we don't accidentally identify them as targets - do you want to do that now?"
+    options:
+      - id: 1
+        message: "Yes I'll add more"
+        next_id: "upload_more_customers"
+      - id: 2
+        message: "Nope, I'm happy with the list as is."
+        next_id: "complete"
+
+  - id: "upload_more_customers"
+    type: "option_set"
+    messages:
+      - "What's the best way for you to upload more customers?"
+    options:
+      - id: 1
+        message: "Upload a CSV"
+        next_id: "csv_sidebar"
+      - id: 2
+        message: "Add them manually - one by one"
+        next_id: "manually_sidebar"
+      - id: 3
+        message: "Actually let's continue for now. I'll do this later."
+        next_id: "complete"
+
+  - id: "csv_sidebar"
+    type: "sidebar"
+    sidebar: "target_finder_upload_csv"
+    messages:
+      - "Download the CSV template and add your customers"
+    next_id: "complete"
+
+  - id: "manually_sidebar"
+    type: "sidebar"
+    sidebar: "target_finder_add_manually"
+    messages:
+      - "Add your previous customers here"
+    next_id: "complete"
+
+  - id: "complete-not-right-now"
+    messages:
+      - "No worries. We can come back to that. Is there something else you want to try?"
+    type: "free_type"
+    next_id: "complete"
+
+  - id: "complete"
+    type: "end_flow"
+    messages:
+      - "{{user_first_name}} - thanks for the info. I've asked my lead generation expert to go away and find ten leads that match this ideal target profile."
+      - "I'll shoot you a message when that's done. When they are finished, you can go and approve the leads, or decline them with feedback if you think they aren't quite right."
+      - "Once we have enough approved leads, we can create a campaign and decide what to do with them!"

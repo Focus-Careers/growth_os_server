@@ -1,0 +1,29 @@
+name: "signup_ideal_target_profile"
+start_id: "start_itp"
+
+steps:
+  - id: "start_itp"
+    messages:
+      - "Great — I've saved your organisation details."
+      - "Now let's figure out who you actually want to market to."
+      - "Ready?"
+    type: "option_set"
+    options:
+      - id: 1
+        message: "Ready 🚀"
+    next_id: "complete"
+
+  - id: "complete"
+    messages:
+    - "OK, we're going to generate your ideal target profile, or ITP, based on your website and the details you've provided."
+    - "Let me consult the business analyst for this one. Two seconds."
+    type: "end_flow"
+
+on_complete:
+  employee: "business_analyst"
+  skill: "define_itp"
+  inputs:
+    organisation_name: "@account.organisation_name"
+    organisation_website: "@account.organisation_website"
+    description: "@account.description"
+    problem_solved: "@account.problem_solved"

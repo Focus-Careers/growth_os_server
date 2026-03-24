@@ -1,0 +1,45 @@
+name: "upload_customers"
+start_id: "intro"
+
+steps:
+  - id: "intro"
+    messages:
+      - "Great, thank you {{user_first_name}}.
+      - One last thing - having up-to-date knowledge of the customers or clients that already work with you really helps our employees get an idea of how to find new ones."
+      - "It also means we don't accidentally market to your current clients."
+      - "You can either upload a CSV, or just add your current customers one by one. By the way — you can always do this later."
+    type: "option_set"
+    options:
+      - id: 1
+        message: "Upload CSV"
+        next_id: "upload_csv_sidebar"
+      - id: 2
+        message: "Add manually"
+        next_id: "add_manually_sidebar"
+      - id: 3
+        message: "Do it later"
+        next_id: "complete"
+
+  - id: "upload_csv_sidebar"
+    type: "sidebar"
+    sidebar: "upload_csv"
+    next_id: "complete"
+
+  - id: "add_manually_sidebar"
+    type: "sidebar"
+    sidebar: "add_manually_customers"
+    next_id: "complete"
+
+  - id: "complete"
+    messages:
+      - "Awesome. {{user_first_name}}, we're all set for now."
+    type: "end_flow"
+
+on_complete:
+  db_updates:
+    - table: "user_details"
+      match_field: "id"
+      match_value: "@user_details_id"
+      set:
+        signup_complete: true
+  mobilisation: "signed_up_first_message"

@@ -1,0 +1,16 @@
+name: "signed_up_first_message"
+start_id: "time_to_start"
+
+steps:
+  - id: "time_to_start"
+    messages:
+      - "It's time to start marketing."
+      - "Any specific ideas you want to focus on first - or should I take the lead?"
+    type: "free_type"
+    next_id: "complete"
+
+  - id: "complete"
+    messages: []
+    type: "end_flow"
+
+on_complete: {}

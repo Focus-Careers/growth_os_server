@@ -1,0 +1,35 @@
+name: "need_ten_more_leads"
+start_id: "need_more_leads"
+
+steps:
+  - id: "need_more_leads"
+    type: "option_set"
+    messages:
+      - "I just spoke with Belfort. He let me know that you've gone through the list of leads he provided."
+      - "As we don't have ten approved leads yet, shall we get him to keep searching?"
+      - "Once we have ten approvals, we have a solid base to find more leads automatically - you won't need to keep approving them."
+    options:
+      - id: 1
+        message: "Yes - let's get him to keep searching."
+        next_id: "more_leads"
+      - id: 2
+        message: "No, let's pause that for now."
+        next_id: "no_more_leads"
+
+  - id: "more_leads"
+    type: "end_flow"
+    messages:
+      - "Got it - I'll relay that to him now."
+
+  - id: "no_more_leads"
+    type: "end_flow"
+    messages:
+      - "No worries. We'll come back to it."
+
+on_complete:
+  condition:
+    step: "need_more_leads"
+    value: "Yes - let's get him to keep searching."
+  employee: "lead_gen_expert"
+  skill: "target_finder_ten_leads"
+  inputs: {}

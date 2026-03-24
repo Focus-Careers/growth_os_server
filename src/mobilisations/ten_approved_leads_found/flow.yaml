@@ -1,0 +1,35 @@
+name: "ten_approved_leads_found"
+start_id: "ten_approved"
+
+steps:
+  - id: "ten_approved"
+    type: "option_set"
+    messages:
+      - "Just spoke with Belfort. Great news - we've got ten leads approved."
+      - "That means we can get him to go out and find leads without approval."
+      - "Finding the right leads isn't always a quick process. Shall we task him with finding another 100 with good scores and then check back in?"
+    options:
+      - id: 1
+        message: "Yes please"
+        next_id: "yes_more"
+      - id: 2
+        message: "Not right now."
+        next_id: "no_more"
+
+  - id: "yes_more"
+    type: "end_flow"
+    messages:
+      - "Great. He's already hard at work. You can sit back and relax - I'll let you know when done."
+
+  - id: "no_more"
+    type: "end_flow"
+    messages:
+      - "No worries, we'll come back to it later."
+
+on_complete:
+  condition:
+    step: "ten_approved"
+    value: "Yes please"
+  employee: "lead_gen_expert"
+  skill: "target_finder_100_leads"
+  inputs: {}
