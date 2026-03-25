@@ -124,7 +124,15 @@ export async function processMessage(record) {
 
   if (decision.path === 'trigger_skill') {
     const { employee, skill } = decision;
-    const mobilisationName = `initiate_${skill}`;
+    // Map skill names to their mobilisation names
+    const skillToMobilisation = {
+      'target_finder_ten_leads': 'initiate_target_finder_ten_leads',
+      'create_campaign': 'initiate_create_campaign',
+      'create_new_sender': 'setup_sender',
+      'analyse_website': 'sign_up_get_website',
+      'define_itp': 'signup_ideal_target_profile',
+    };
+    const mobilisationName = skillToMobilisation[skill] ?? `initiate_${skill}`;
     console.log(`[amp] trigger_skill → ${employee}/${skill} → broadcasting start_mobilisation: ${mobilisationName}`);
     await getSupabaseAdmin().channel(`user:${user_details_id}`).send({
       type: 'broadcast',
