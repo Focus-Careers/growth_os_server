@@ -105,6 +105,18 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
       break;
     }
 
+    case 'lead_gen_expert/itp_refiner': {
+      await sendAppMessage({
+        type: 'skill_output',
+        employee,
+        skill: skill_name,
+        user_details_id,
+        sidebar: null,
+        output,
+      });
+      break;
+    }
+
     case 'lead_gen_expert/contact_finder': {
       const contactCount = output.contacts?.length ?? 0;
       await sendAppMessage({
