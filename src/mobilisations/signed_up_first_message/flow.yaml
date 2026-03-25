@@ -13,4 +13,10 @@ steps:
     messages: []
     type: "end_flow"
 
-on_complete: {}
+on_complete:
+  db_updates:
+    - table: "user_details"
+      match_field: "id"
+      match_value: "@user_details_id"
+      set:
+        signup_complete: true
