@@ -53,25 +53,12 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
       const highScoreCount = output.high_score_count ?? 0;
       const totalTargets = output.total_targets ?? 0;
 
-      if (highScoreCount >= 10) {
-        const { data: ud } = await getSupabaseAdmin()
-          .from('user_details').select('queued_mobilisations').eq('id', user_details_id).single();
-        const queue = ud?.queued_mobilisations ?? [];
-        if (!queue.some(q => q.mobilisation === 'ten_70_plus_leads_found')) {
-          await getSupabaseAdmin()
-            .from('user_details')
-            .update({ queued_mobilisations: [...queue, { mobilisation: 'ten_70_plus_leads_found', queued_at: new Date().toISOString() }] })
-            .eq('id', user_details_id);
-          console.log('[skill_output_processor] Queued ten_70_plus_leads_found for user', user_details_id);
-        }
-      }
-
       await sendAppMessage({
         type: 'skill_output',
         employee,
         skill: skill_name,
         user_details_id,
-        sidebar: null,
+        sidebar: highScoreCount > 0 ? 'approve_targets' : null,
         output: { high_score_count: highScoreCount, total_targets: totalTargets, itp_id: output.itp_id },
       });
       break;

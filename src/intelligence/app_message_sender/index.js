@@ -18,6 +18,7 @@ const skillPromptMap = {
   'lead_gen_expert/analyse_website': 'analyse_website.md',
   'business_analyst/define_itp': 'define_itp.md',
   'lead_gen_expert/itp_refiner': 'itp_refiner.md',
+  'lead_gen_expert/target_finder_ten_leads': 'target_finder_ten_leads.md',
   'email_campaign_manager/create_campaign': 'create_campaign.md',
 };
 
