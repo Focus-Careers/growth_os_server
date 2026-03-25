@@ -13,7 +13,12 @@ async function getDecisionMakerTitles(itpDemographic) {
     }],
   });
   const raw = response.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-  return JSON.parse(raw);
+  try {
+    return JSON.parse(raw);
+  } catch (parseError) {
+    console.error('[contact_finder] Failed to parse Claude response as JSON:', parseError.message, '| raw text:', raw);
+    return [];
+  }
 }
 
 async function searchApollo(domain, titles) {

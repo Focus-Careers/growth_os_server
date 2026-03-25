@@ -18,7 +18,13 @@ export async function executeSkill({ organisation_name, organisation_website, de
   });
 
   const raw = response.content[0].text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-  const itp = JSON.parse(raw);
+  let itp;
+  try {
+    itp = JSON.parse(raw);
+  } catch (parseError) {
+    console.error('[define_itp] Failed to parse Claude response as JSON:', parseError.message, '| raw text:', raw);
+    itp = {};
+  }
 
   await processSkillOutput({
     employee: 'business_analyst',

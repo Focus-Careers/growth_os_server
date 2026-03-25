@@ -36,7 +36,13 @@ export async function executeSkill({ website, user_details_id }) {
   });
 
   const raw = message.content[0].text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-  const analysis = JSON.parse(raw);
+  let analysis;
+  try {
+    analysis = JSON.parse(raw);
+  } catch (parseError) {
+    console.error('[analyse_website] Failed to parse Claude response as JSON:', parseError.message, '| raw text:', raw);
+    analysis = {};
+  }
 
   await processSkillOutput({
     employee: 'lead_gen_expert',

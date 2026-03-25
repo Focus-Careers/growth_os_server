@@ -82,7 +82,13 @@ export async function processMessage(record) {
   const response = await getAnthropic().messages.create(claudeRequest);
 
   const raw = response.content[0].text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-  const decision = JSON.parse(raw);
+  let decision;
+  try {
+    decision = JSON.parse(raw);
+  } catch (parseError) {
+    console.error('[amp] Failed to parse Claude response as JSON:', parseError.message, '| raw text:', raw);
+    decision = { path: 'direct_response' };
+  }
 
   await getSupabaseAdmin().from('app_message_processor_logs').insert({
     user_details_id,
