@@ -12,6 +12,18 @@ import { executeSkill as leadGenExpert_contactFinder } from './lead_gen_expert/s
 import { executeSkill as businessAnalyst_defineItp } from './business_analyst/skills/define_itp/index.js';
 import { executeSkill as emailCampaignManager_createNewSender } from './email_campaign_manager/skills/create_new_sender/index.js';
 import { executeSkill as emailCampaignManager_createCampaign } from './email_campaign_manager/skills/create_campaign/index.js';
+import { broadcastSkillStatus } from '../intelligence/skill_status_broadcaster/index.js';
+
+// Skill-specific status messages shown to the user while running
+const skillStatusMessages = {
+  'lead_gen_expert/target_finder_ten_leads': 'Belfort is searching the web for target companies...',
+  'lead_gen_expert/target_finder_100_leads': 'Belfort is expanding the target search...',
+  'lead_gen_expert/contact_finder': 'Belfort is finding contact details...',
+  'lead_gen_expert/analyse_website': 'Belfort is analysing the website...',
+  'business_analyst/define_itp': 'Warren is building your ideal target profile...',
+  'email_campaign_manager/create_campaign': 'Draper is drafting your campaign...',
+  'email_campaign_manager/create_new_sender': 'Draper is setting up your sender identity...',
+};
 
 const skills = {
   office_administrator: {
@@ -35,5 +47,41 @@ const skills = {
 export async function dispatchSkill(employee, skill, inputs) {
   const fn = skills[employee]?.[skill];
   if (!fn) throw new Error(`Unknown skill: ${employee}/${skill}`);
-  return fn(inputs);
+
+  const key = `${employee}/${skill}`;
+  const statusMessage = skillStatusMessages[key] ?? `Processing ${skill}...`;
+
+  if (inputs.user_details_id) {
+    await broadcastSkillStatus(inputs.user_details_id, {
+      employee,
+      skill,
+      status: 'running',
+      message: statusMessage,
+    });
+  }
+
+  try {
+    const result = await fn(inputs);
+
+    if (inputs.user_details_id) {
+      await broadcastSkillStatus(inputs.user_details_id, {
+        employee,
+        skill,
+        status: 'complete',
+        message: null,
+      });
+    }
+
+    return result;
+  } catch (err) {
+    if (inputs.user_details_id) {
+      await broadcastSkillStatus(inputs.user_details_id, {
+        employee,
+        skill,
+        status: 'complete',
+        message: null,
+      });
+    }
+    throw err;
+  }
 }
