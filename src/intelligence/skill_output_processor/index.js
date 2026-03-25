@@ -71,7 +71,7 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
         employee,
         skill: skill_name,
         user_details_id,
-        sidebar: 'target_finder_ten_leads',
+        sidebar: null,
         output: { high_score_count: highScoreCount, total_targets: totalTargets, itp_id: output.itp_id },
       });
       break;
@@ -99,7 +99,7 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
         employee,
         skill: skill_name,
         user_details_id,
-        sidebar: 'target_finder_100_leads',
+        sidebar: null,
         output: { approved_count: approvedCount, total_targets: totalTargets, itp_id: output.itp_id },
       });
       break;
@@ -112,7 +112,7 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
         employee,
         skill: skill_name,
         user_details_id,
-        sidebar: 'contact_finder',
+        sidebar: null,
         output: { lead_id: output.lead_id, contact_count: contactCount },
       });
       break;
