@@ -1,0 +1,144 @@
+import { readFile } from 'fs/promises';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import { getAnthropic } from '../../../../config/anthropic.js';
+import { getSupabaseAdmin } from '../../../../config/supabase.js';
+import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+export async function executeSkill({ user_details_id, itp_id, campaign_name, num_emails, tone }) {
+  const admin = getSupabaseAdmin();
+
+  // Look up account
+  const { data: userDetails } = await admin
+    .from('user_details').select('account_id').eq('id', user_details_id).single();
+  if (!userDetails?.account_id) {
+    console.error('[create_campaign] No account found for user', user_details_id);
+    return { error: 'no_account' };
+  }
+
+  // Load ITP for context
+  const { data: itp } = await admin
+    .from('itp').select('*').eq('id', itp_id).single();
+  if (!itp) {
+    console.error('[create_campaign] ITP not found:', itp_id);
+    return { error: 'itp_not_found' };
+  }
+
+  // Load account for context
+  const { data: account } = await admin
+    .from('account').select('*').eq('id', userDetails.account_id).single();
+
+  // Use Claude to generate subject line and email template
+  const prompt = await readFile(join(__dirname, 'prompt.md'), 'utf-8');
+
+  const context = JSON.stringify({
+    campaign_name,
+    num_emails: parseInt(num_emails) || 1,
+    tone,
+    itp: {
+      name: itp.name,
+      summary: itp.itp_summary,
+      demographics: itp.itp_demographic,
+      pain_points: itp.itp_pain_points,
+      buying_trigger: itp.itp_buying_trigger,
+    },
+    account: {
+      name: account?.organisation_name,
+      description: account?.description,
+      problem_solved: account?.problem_solved,
+      website: account?.organisation_website,
+    },
+  }, null, 2);
+
+  const response = await getAnthropic().messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 2048,
+    messages: [{ role: 'user', content: `${prompt}\n\nContext:\n${context}` }],
+  });
+
+  const raw = response.content[0].text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+  let generated;
+  try {
+    generated = JSON.parse(raw);
+  } catch (err) {
+    console.error('[create_campaign] Failed to parse Claude response:', err.message, '| raw:', raw);
+    generated = { subject_line: `${campaign_name} - Introduction`, email_template: 'Hi {{first_name}},\n\nI wanted to reach out...' };
+  }
+
+  // Parse num_emails from the option message (e.g. "3 email sequence" -> 3)
+  const emailCount = parseInt(num_emails) || 1;
+
+  // Insert campaign
+  const { data: campaign, error: campaignError } = await admin
+    .from('campaigns')
+    .insert({
+      account_id: userDetails.account_id,
+      itp_id,
+      name: campaign_name,
+      status: 'draft',
+      num_emails: emailCount,
+      tone,
+      subject_line: generated.subject_line,
+      email_template: generated.email_template,
+    })
+    .select('id')
+    .single();
+
+  if (campaignError) {
+    console.error('[create_campaign] Insert error:', campaignError);
+    return { error: 'insert_failed' };
+  }
+
+  // Auto-populate campaign_contacts from approved targets with contacts
+  const { data: contacts } = await admin
+    .from('contacts')
+    .select('id, lead_id')
+    .eq('account_id', userDetails.account_id);
+
+  // Filter to contacts whose target belongs to this ITP and is approved
+  if (contacts?.length) {
+    const { data: approvedTargets } = await admin
+      .from('targets')
+      .select('id')
+      .eq('itp', itp_id)
+      .eq('approved', true);
+
+    const approvedTargetIds = new Set((approvedTargets ?? []).map(t => t.id));
+    const matchingContacts = contacts.filter(c => approvedTargetIds.has(c.lead_id));
+
+    if (matchingContacts.length) {
+      const { error: ccError } = await admin
+        .from('campaign_contacts')
+        .insert(matchingContacts.map(c => ({
+          campaign_id: campaign.id,
+          contact_id: c.id,
+        })));
+      if (ccError) console.error('[create_campaign] campaign_contacts insert error:', ccError);
+    }
+  }
+
+  // Count contacts added
+  const { count } = await admin
+    .from('campaign_contacts')
+    .select('id', { count: 'exact', head: true })
+    .eq('campaign_id', campaign.id);
+
+  await processSkillOutput({
+    employee: 'email_campaign_manager',
+    skill_name: 'create_campaign',
+    user_details_id,
+    output: {
+      campaign_id: campaign.id,
+      campaign_name,
+      subject_line: generated.subject_line,
+      email_template: generated.email_template,
+      num_emails: emailCount,
+      tone,
+      contact_count: count ?? 0,
+    },
+  });
+
+  return { campaign_id: campaign.id };
+}

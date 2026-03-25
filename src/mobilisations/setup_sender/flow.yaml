@@ -1,0 +1,31 @@
+name: "setup_sender"
+start_id: "intro"
+
+steps:
+  - id: "intro"
+    type: "free_type"
+    messages:
+      - "Before we can send emails, we need to set up a sender identity."
+      - "What email address do you want to send campaigns from?"
+    response_key: "sender_email"
+    next_id: "display_name"
+
+  - id: "display_name"
+    type: "free_type"
+    messages:
+      - "And what name should appear as the sender? (e.g. 'John from Acme Corp')"
+    response_key: "display_name"
+    next_id: "complete"
+
+  - id: "complete"
+    type: "end_flow"
+    messages:
+      - "Got it. I'll get that set up for you now."
+
+on_complete:
+  employee: "email_campaign_manager"
+  skill: "create_new_sender"
+  sync: true
+  inputs:
+    email: "sender_email"
+    display_name: "display_name"

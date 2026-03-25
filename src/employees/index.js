@@ -10,6 +10,8 @@ import { executeSkill as leadGenExpert_targetFinderTenLeads } from './lead_gen_e
 import { executeSkill as leadGenExpert_targetFinder100Leads } from './lead_gen_expert/skills/target_finder_100_leads/index.js';
 import { executeSkill as leadGenExpert_contactFinder } from './lead_gen_expert/skills/contact_finder/index.js';
 import { executeSkill as businessAnalyst_defineItp } from './business_analyst/skills/define_itp/index.js';
+import { executeSkill as emailCampaignManager_createNewSender } from './email_campaign_manager/skills/create_new_sender/index.js';
+import { executeSkill as emailCampaignManager_createCampaign } from './email_campaign_manager/skills/create_campaign/index.js';
 
 const skills = {
   office_administrator: {
@@ -23,6 +25,10 @@ const skills = {
   },
   business_analyst: {
     define_itp: businessAnalyst_defineItp,
+  },
+  email_campaign_manager: {
+    create_new_sender: emailCampaignManager_createNewSender,
+    create_campaign: emailCampaignManager_createCampaign,
   },
 };
 

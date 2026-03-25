@@ -118,6 +118,30 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
       break;
     }
 
+    case 'email_campaign_manager/create_new_sender': {
+      await sendAppMessage({
+        type: 'skill_output',
+        employee,
+        skill: skill_name,
+        user_details_id,
+        sidebar: null,
+        output,
+      });
+      break;
+    }
+
+    case 'email_campaign_manager/create_campaign': {
+      await sendAppMessage({
+        type: 'skill_output',
+        employee,
+        skill: skill_name,
+        user_details_id,
+        sidebar: null,
+        output,
+      });
+      break;
+    }
+
     default:
       console.warn(`skill_output_processor: no handler for ${key}`);
   }

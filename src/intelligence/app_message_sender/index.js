@@ -17,6 +17,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const skillPromptMap = {
   'lead_gen_expert/analyse_website': 'analyse_website.md',
   'business_analyst/define_itp': 'define_itp.md',
+  'email_campaign_manager/create_campaign': 'create_campaign.md',
 };
 
 export async function sendDirectResponse({ user_details_id, conversationHistory }) {

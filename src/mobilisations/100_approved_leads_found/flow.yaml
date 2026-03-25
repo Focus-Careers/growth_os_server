@@ -3,6 +3,30 @@ start_id: "notify"
 
 steps:
   - id: "notify"
-    type: "end_flow"
+    type: "option_set"
     messages:
       - "Good news: Belfort has just found the 100th approved lead."
+      - "You've got a solid base of targets now. Want to set up an email campaign to start reaching out to them?"
+    options:
+      - id: 1
+        message: "Yes, let's create a campaign"
+        next_id: "complete"
+      - id: 2
+        message: "Not yet"
+        next_id: "decline"
+
+  - id: "decline"
+    type: "end_flow"
+    messages:
+      - "No problem. When you're ready, just let me know and we'll get a campaign set up."
+
+  - id: "complete"
+    type: "end_flow"
+    messages:
+      - "Great — let's get that set up."
+
+on_complete:
+  condition:
+    step: "notify"
+    value: "Yes, let's create a campaign"
+  mobilisation: "initiate_create_campaign"
