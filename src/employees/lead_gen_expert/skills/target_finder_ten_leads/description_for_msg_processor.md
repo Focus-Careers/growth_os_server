@@ -1,1 +1,1 @@
-The lead generation expert can scrape the internet to find new leads, prospects, or target companies, which can be used later on for email campaigns. 
+The lead generation expert can scrape the internet to find new targets, prospects, or target companies, which can be used later on for email campaigns.

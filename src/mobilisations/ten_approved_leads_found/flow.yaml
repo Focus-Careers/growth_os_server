@@ -5,9 +5,9 @@ steps:
   - id: "ten_approved"
     type: "option_set"
     messages:
-      - "Just spoke with Belfort. Great news - we've got ten leads approved."
-      - "That means we can get him to go out and find leads without approval."
-      - "Finding the right leads isn't always a quick process. Shall we task him with finding another 100 with good scores and then check back in?"
+      - "Just spoke with Belfort. Great news - we've got ten targets approved."
+      - "That means we can get him to go out and find targets without approval."
+      - "Finding the right targets isn't always a quick process. Shall we task him with finding another 100 with good scores and then check back in?"
     options:
       - id: 1
         message: "Yes please"

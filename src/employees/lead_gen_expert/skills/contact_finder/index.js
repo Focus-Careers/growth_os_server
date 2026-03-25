@@ -1,5 +1,6 @@
 import { getAnthropic } from '../../../../config/anthropic.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
+import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 
 const APOLLO_BASE_URL = 'https://api.apollo.io/v1';
 
@@ -68,7 +69,7 @@ export async function executeSkill({ user_details_id, lead_id }) {
   console.log(`[contact_finder] Starting for lead ${lead_id}`);
 
   const { data: lead } = await getSupabaseAdmin()
-    .from('leads')
+    .from('targets')
     .select('id, title, link, itp')
     .eq('id', lead_id)
     .single();
@@ -164,5 +165,13 @@ export async function executeSkill({ user_details_id, lead_id }) {
   }
 
   console.log(`[contact_finder] Done — ${saved.length} contacts saved for lead ${lead_id}`);
+
+  await processSkillOutput({
+    employee: 'lead_gen_expert',
+    skill_name: 'contact_finder',
+    user_details_id,
+    output: { lead_id, contacts: saved },
+  });
+
   return { user_details_id, lead_id, contacts: saved };
 }

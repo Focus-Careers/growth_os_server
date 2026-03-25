@@ -5,9 +5,9 @@ Company website: {{account_organisation_website}}
 Company description:{{account_organisation_description}}
 Problem solved:{{account_organisation_problem_solved}}
 
-You have been provided with a list of possible leads from an automated lead finder.
+You have been provided with a list of possible targets from an automated target finder.
 
-Here are the leads:
+Here are the targets:
 
 {{response_from_serper}}
 
