@@ -53,6 +53,24 @@ export async function processMessage(record) {
     .order('created_at', { ascending: true })
     .limit(50);
 
+  // Load context about what's already in progress to prevent re-triggering
+  const { data: ud } = await getSupabaseAdmin()
+    .from('user_details').select('account_id, queued_mobilisations').eq('id', user_details_id).single();
+
+  let activeContext = '';
+  if (ud?.account_id) {
+    const { data: pendingTargets } = await getSupabaseAdmin()
+      .from('targets').select('id', { count: 'exact', head: true }).eq('approved', false).eq('rejected', false);
+    const { data: campaigns } = await getSupabaseAdmin()
+      .from('campaigns').select('id, name, status').eq('account_id', ud.account_id);
+
+    const contextParts = [];
+    if (pendingTargets?.length) contextParts.push(`Target finder is already running or has ${pendingTargets.length} targets awaiting approval in the Belfort tab.`);
+    if (ud.queued_mobilisations?.length) contextParts.push(`There are ${ud.queued_mobilisations.length} queued actions waiting to run.`);
+    if (campaigns?.length) contextParts.push(`Existing campaigns: ${campaigns.map(c => `${c.name} (${c.status})`).join(', ')}.`);
+    if (contextParts.length) activeContext = `\n\n# Current State\n${contextParts.join('\n')}\nDo NOT suggest skills that are already in progress or recently completed. If targets are already being found or awaiting approval, do not trigger target_finder again.`;
+  }
+
   console.log(`[amp] loaded ${history?.length} messages, loading prompts...`);
   const [decisionPrompt, skillDescriptions] = await Promise.all([
     readFile(join(__dirname, 'decision_logic_prompt.md'), 'utf-8'),
@@ -65,7 +83,7 @@ export async function processMessage(record) {
     `## ${employee} / ${skill}\n${content}`
   ).join('\n\n');
 
-  const systemPrompt = `${decisionPrompt}\n\n${skillsSection}`;
+  const systemPrompt = `${decisionPrompt}\n\n${skillsSection}${activeContext}`;
 
   // Build conversation history as user message
   const conversationHistory = (history ?? []).map(m =>
