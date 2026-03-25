@@ -247,9 +247,11 @@ export async function executeSkill({ user_details_id, itp_id }) {
         if (insertError) {
           console.error('[target_finder] Insert error for', result.link, ':', insertError);
         } else if ((item.score ?? 0) >= HIGH_SCORE_THRESHOLD && insertedTarget?.id) {
-          console.log('[target_finder] Auto-approved target, dispatching contact_finder for', result.link);
-          runContactFinder({ user_details_id, lead_id: insertedTarget.id })
-            .catch(err => console.error('[target_finder] contact_finder error:', err.message));
+          try {
+            await runContactFinder({ user_details_id, lead_id: insertedTarget.id, silent: true });
+          } catch (err) {
+            console.error('[target_finder] inline contact_finder error for', result.link, ':', err.message);
+          }
         }
       }
     }

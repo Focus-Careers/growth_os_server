@@ -22,20 +22,21 @@ async function getDecisionMakerTitles(itpDemographic) {
   }
 }
 
-async function searchApollo(domain, titles) {
-  console.log(`[contact_finder] Apollo search → domain: ${domain}, titles: ${JSON.stringify(titles)}`);
+async function searchApollo(domain, titles, perPage = 10) {
+  console.log(`[contact_finder] Apollo search → domain: ${domain}, titles: ${JSON.stringify(titles)}, perPage: ${perPage}`);
+  const body = {
+    q_organization_domains: domain,
+    per_page: perPage,
+    page: 1,
+  };
+  if (titles && titles.length > 0) body.person_titles = titles;
   const res = await fetch(`${APOLLO_BASE_URL}/mixed_people/api_search`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': process.env.APOLLO_API_KEY,
     },
-    body: JSON.stringify({
-      q_organization_domains: domain,
-      person_titles: titles,
-      per_page: 10,
-      page: 1,
-    }),
+    body: JSON.stringify(body),
   });
   const data = await res.json();
   console.log(`[contact_finder] Apollo status: ${res.status} | people returned: ${data.people?.length ?? 0}`);
@@ -65,7 +66,7 @@ async function revealEmail(firstName, lastName, domain) {
   return email;
 }
 
-export async function executeSkill({ user_details_id, lead_id }) {
+export async function executeSkill({ user_details_id, lead_id, silent = false }) {
   console.log(`[contact_finder] Starting for lead ${lead_id}`);
 
   const { data: lead } = await getSupabaseAdmin()
@@ -105,10 +106,17 @@ export async function executeSkill({ user_details_id, lead_id }) {
 
   // Search Apollo for people at this domain with matching titles
   const apolloData = await searchApollo(domain, titles);
-  const people = apolloData.people ?? [];
+  let people = apolloData.people ?? [];
+
+  // Broadened fallback: if title-based search returned 0, search without title filter
+  if (people.length === 0) {
+    console.log(`[contact_finder] Title search empty for ${domain}, trying broadened fallback (no title filter)`);
+    const fallbackData = await searchApollo(domain, [], 5);
+    people = fallbackData.people ?? [];
+  }
 
   if (people.length === 0) {
-    console.log(`[contact_finder] No people found for ${domain}`);
+    console.log(`[contact_finder] No people found for ${domain} after fallback`);
     return { user_details_id, lead_id, contacts: [] };
   }
 
@@ -166,12 +174,14 @@ export async function executeSkill({ user_details_id, lead_id }) {
 
   console.log(`[contact_finder] Done — ${saved.length} contacts saved for lead ${lead_id}`);
 
-  await processSkillOutput({
-    employee: 'lead_gen_expert',
-    skill_name: 'contact_finder',
-    user_details_id,
-    output: { lead_id, contacts: saved },
-  });
+  if (!silent) {
+    await processSkillOutput({
+      employee: 'lead_gen_expert',
+      skill_name: 'contact_finder',
+      user_details_id,
+      output: { lead_id, contacts: saved },
+    });
+  }
 
   return { user_details_id, lead_id, contacts: saved };
 }

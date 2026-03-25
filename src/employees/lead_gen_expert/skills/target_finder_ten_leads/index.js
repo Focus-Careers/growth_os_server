@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getAnthropic } from '../../../../config/anthropic.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
+import { executeSkill as runContactFinder } from '../contact_finder/index.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -224,7 +225,7 @@ export async function executeSkill({ user_details_id, itp_id }) {
         if (!result) continue;
         console.log('[target_finder] Scored target:', result.link, '→', item.score, item.reason);
 
-        const { error: insertError } = await getSupabaseAdmin().from('targets').insert({
+        const { data: insertedTarget, error: insertError } = await getSupabaseAdmin().from('targets').insert({
           itp: itp.id,
           title: result.title ?? null,
           link: result.link ?? null,
@@ -232,8 +233,16 @@ export async function executeSkill({ user_details_id, itp_id }) {
           score: item.score ?? null,
           score_reason: item.reason ?? null,
           target_finder_google_search_prompts: [{ id: searchPromptId, position: result.position }],
-        });
-        if (insertError) console.error('[target_finder] Insert error for', result.link, ':', insertError);
+        }).select('id').single();
+        if (insertError) {
+          console.error('[target_finder] Insert error for', result.link, ':', insertError);
+        } else if ((item.score ?? 0) >= HIGH_SCORE_THRESHOLD && insertedTarget) {
+          try {
+            await runContactFinder({ user_details_id, lead_id: insertedTarget.id, silent: true });
+          } catch (err) {
+            console.error('[target_finder] inline contact_finder error for', result.link, ':', err.message);
+          }
+        }
       }
     }
   }
