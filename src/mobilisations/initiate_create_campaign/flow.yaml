@@ -70,9 +70,6 @@ steps:
       - "Great choices. I'm handing this over to the campaign manager now — they'll draft your campaign."
 
 on_complete:
-  condition:
-    step: "intro"
-    value: "Yes, let's do it"
   employee: "email_campaign_manager"
   skill: "create_campaign"
   inputs:

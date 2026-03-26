@@ -8,6 +8,12 @@ import { processSkillOutput } from '../../../../intelligence/skill_output_proces
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export async function executeSkill({ user_details_id, itp_id, campaign_name, num_emails, tone }) {
+  // Guard: if required inputs are missing (e.g. user cancelled the flow), return early
+  if (!campaign_name || !num_emails || !tone) {
+    console.log('[create_campaign] Missing required inputs (campaign_name, num_emails, or tone) — skipping.');
+    return { skipped: true };
+  }
+
   const admin = getSupabaseAdmin();
 
   // Look up account

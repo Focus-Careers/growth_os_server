@@ -82,6 +82,13 @@ export async function completeMobilisation(mobilisationName, responses, messages
   }
 
   if (on_complete.mobilisation) {
+    // Set active_mobilisation to the next one immediately to prevent message processor gap
+    if (user_details_id) {
+      await getSupabaseAdmin()
+        .from('user_details')
+        .update({ active_mobilisation: on_complete.mobilisation })
+        .eq('id', user_details_id);
+    }
     return { next_mobilisation: on_complete.mobilisation };
   }
 
