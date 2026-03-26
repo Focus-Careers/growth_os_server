@@ -4,7 +4,6 @@ start_id: "time_to_start"
 steps:
   - id: "time_to_start"
     messages:
-      - "Awesome. We're all set up and ready to go."
       - "The first thing I'd recommend is finding some target companies that match your ideal profile. I'll get Belfort on it — he'll search the web, score each company against your ITP, and find contact details."
       - "Once he's done, you'll review the results to make sure we're on the right track. Sound good?"
     type: "option_set_with_input"
