@@ -70,11 +70,15 @@ export async function executeSkill({ user_details_id, itp_id, campaign_name, num
     generated = JSON.parse(raw);
   } catch (err) {
     console.error('[create_campaign] Failed to parse Claude response:', err.message, '| raw:', raw);
-    generated = { subject_line: `${campaign_name} - Introduction`, email_template: 'Hi {{first_name}},\n\nI wanted to reach out...' };
+    generated = { sequence: [{ seq_number: 1, delay_in_days: 0, subject: `${campaign_name} - Introduction`, body: '<p>Hi {{first_name}},</p><p>I wanted to reach out...</p>' }] };
   }
 
   // Parse num_emails from the option message (e.g. "3 email sequence" -> 3)
   const emailCount = parseInt(num_emails) || 1;
+  const sequence = generated.sequence ?? [];
+  const firstEmail = sequence[0] ?? {};
+
+  console.log(`[create_campaign] Generated ${sequence.length} email sequence`);
 
   // Insert campaign
   const { data: campaign, error: campaignError } = await admin
@@ -86,8 +90,9 @@ export async function executeSkill({ user_details_id, itp_id, campaign_name, num
       status: 'draft',
       num_emails: emailCount,
       tone,
-      subject_line: generated.subject_line,
-      email_template: generated.email_template,
+      subject_line: firstEmail.subject ?? campaign_name,
+      email_template: firstEmail.body ?? '',
+      email_sequence: sequence,
     })
     .select('id')
     .single();
@@ -138,8 +143,9 @@ export async function executeSkill({ user_details_id, itp_id, campaign_name, num
     output: {
       campaign_id: campaign.id,
       campaign_name,
-      subject_line: generated.subject_line,
-      email_template: generated.email_template,
+      subject_line: firstEmail.subject ?? campaign_name,
+      email_template: firstEmail.body ?? '',
+      email_sequence: sequence,
       num_emails: emailCount,
       tone,
       contact_count: count ?? 0,
