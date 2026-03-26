@@ -54,7 +54,7 @@ export async function saveSequences(campaignId, sequences) {
   }));
   const { ok, data } = await smartleadFetch(`/campaigns/${campaignId}/sequences`, {
     method: 'POST',
-    body: JSON.stringify(formatted),
+    body: JSON.stringify({ sequences: formatted }),
   });
   return ok ? data : null;
 }
@@ -70,7 +70,7 @@ export async function setSchedule(campaignId, schedule = {}) {
     start_hour: schedule.start_hour ?? '09:00',
     end_hour: schedule.end_hour ?? '17:00',
     min_time_btw_emails: schedule.min_time_btw_emails ?? 24,
-    max_leads_per_day: schedule.max_leads_per_day ?? 50,
+    max_new_leads_per_day: schedule.max_new_leads_per_day ?? 50,
   };
   const { ok, data } = await smartleadFetch(`/campaigns/${campaignId}/schedule`, {
     method: 'POST',
