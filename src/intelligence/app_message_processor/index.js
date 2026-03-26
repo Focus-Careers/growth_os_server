@@ -99,18 +99,19 @@ export async function processMessage(record) {
 
   const systemPrompt = `${decisionPrompt}\n\n${skillsSection}${activeContext}`;
 
-  // Build conversation history — last 10 messages for context, with latest message highlighted
+  // Build conversation history — last 10 messages for context, with the actual user message highlighted
   const recentHistory = (history ?? []).slice(-10);
-  const latestMessage = recentHistory[recentHistory.length - 1];
-  const previousMessages = recentHistory.slice(0, -1);
+  const userMessage = record.message_body ?? recentHistory[recentHistory.length - 1]?.message_body ?? '';
 
   const conversationHistory = [
     '# Recent conversation:',
-    ...previousMessages.map(m => `${m.is_agent ? 'Watson (CMO)' : 'User'}: ${m.message_body}`),
+    ...recentHistory.map(m => `${m.is_agent ? 'Watson (CMO)' : 'User'}: ${m.message_body}`),
     '',
     '# LATEST MESSAGE FROM USER (this is what you need to route):',
-    `User: ${latestMessage?.message_body ?? ''}`,
+    `User: ${userMessage}`,
   ].join('\n');
+
+  console.log('[amp] LATEST USER MESSAGE:', userMessage);
 
   const claudeRequest = {
     model: 'claude-sonnet-4-6',
