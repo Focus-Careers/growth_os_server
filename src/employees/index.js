@@ -15,6 +15,7 @@ import { executeSkill as businessAnalyst_defineItp } from './business_analyst/sk
 import { executeSkill as emailCampaignManager_createNewSender } from './email_campaign_manager/skills/create_new_sender/index.js';
 import { executeSkill as emailCampaignManager_createCampaign } from './email_campaign_manager/skills/create_campaign/index.js';
 import { executeSkill as emailCampaignManager_launchCampaign } from './email_campaign_manager/skills/launch_campaign/index.js';
+import { executeSkill as emailCampaignManager_syncToSmartlead } from './email_campaign_manager/skills/sync_to_smartlead/index.js';
 import { broadcastSkillStatus } from '../intelligence/skill_status_broadcaster/index.js';
 
 // Skill-specific status messages shown to the user while running
@@ -29,6 +30,7 @@ const skillStatusMessages = {
   'email_campaign_manager/create_campaign': 'Draper is drafting your campaign...',
   'email_campaign_manager/create_new_sender': 'Draper is setting up your sender identity...',
   'email_campaign_manager/launch_campaign': 'Draper is launching your campaign...',
+  'email_campaign_manager/sync_to_smartlead': 'Draper is syncing your campaign to Smartlead...',
 };
 
 const skills = {
@@ -50,6 +52,7 @@ const skills = {
     create_new_sender: emailCampaignManager_createNewSender,
     create_campaign: emailCampaignManager_createCampaign,
     launch_campaign: emailCampaignManager_launchCampaign,
+    sync_to_smartlead: emailCampaignManager_syncToSmartlead,
   },
 };
 

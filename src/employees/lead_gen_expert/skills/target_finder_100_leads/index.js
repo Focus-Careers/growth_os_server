@@ -297,6 +297,64 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
                 }
               }
               console.log(`[target_finder] Added ${enrichResult.contacts.length} contacts to campaign ${campaign_id}`);
+
+              // Push new contacts to Smartlead if campaign is synced
+              const { data: campaignRow } = await getSupabaseAdmin()
+                .from('campaigns')
+                .select('smartlead_campaign_id')
+                .eq('id', campaign_id)
+                .single();
+
+              if (campaignRow?.smartlead_campaign_id) {
+                try {
+                  const { addLeads } = await import('../../../../config/smartlead.js');
+
+                  // Get the contact details for the contacts we just added
+                  const newContactIds = enrichResult.contacts.map(c => c.id);
+                  const { data: newContacts } = await getSupabaseAdmin()
+                    .from('contacts')
+                    .select('id, first_name, last_name, email, role, phone, linkedin_url, target_id, targets(title, domain, company_location, industry)')
+                    .in('id', newContactIds);
+
+                  if (newContacts?.length) {
+                    const slLeads = newContacts.filter(c => c.email).map(c => ({
+                      email: c.email,
+                      first_name: c.first_name ?? '',
+                      last_name: c.last_name ?? '',
+                      company_name: c.targets?.title ?? '',
+                      website: c.targets?.domain ? `https://${c.targets.domain}` : '',
+                      custom_fields: {
+                        job_title: c.role ?? '',
+                        industry: c.targets?.industry ?? '',
+                      },
+                    }));
+
+                    await addLeads(parseInt(campaignRow.smartlead_campaign_id), slLeads);
+
+                    // Mark as synced in campaign_contacts
+                    const ccIds = [];
+                    for (const contact of enrichResult.contacts) {
+                      const { data: cc } = await getSupabaseAdmin()
+                        .from('campaign_contacts')
+                        .select('id')
+                        .eq('campaign_id', campaign_id)
+                        .eq('contact_id', contact.id)
+                        .maybeSingle();
+                      if (cc) ccIds.push(cc.id);
+                    }
+                    if (ccIds.length) {
+                      await getSupabaseAdmin()
+                        .from('campaign_contacts')
+                        .update({ smartlead_synced: true })
+                        .in('id', ccIds);
+                    }
+
+                    console.log(`[target_finder] Pushed ${slLeads.length} new contacts to Smartlead`);
+                  }
+                } catch (err) {
+                  console.error('[target_finder] Smartlead push error:', err.message);
+                }
+              }
             }
 
             await new Promise(r => setTimeout(r, 1000));

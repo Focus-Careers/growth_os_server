@@ -34,6 +34,12 @@ export async function executeSkill({ user_details_id, campaign_id, sender_id }) 
     }).catch(err => console.error('[launch_campaign] target_finder dispatch error:', err));
   }
 
+  // Sync campaign to Smartlead (testing mode — won't activate)
+  dispatchSkill('email_campaign_manager', 'sync_to_smartlead', {
+    user_details_id,
+    campaign_id,
+  }).catch(err => console.error('[launch_campaign] sync_to_smartlead dispatch error:', err));
+
   await processSkillOutput({
     employee: 'email_campaign_manager',
     skill_name: 'launch_campaign',
