@@ -73,6 +73,7 @@ on_complete:
   employee: "email_campaign_manager"
   skill: "create_campaign"
   inputs:
+    itp_id: "itp_id"
     campaign_name: "campaign_name"
     num_emails: "num_emails"
     tone: "tone"
