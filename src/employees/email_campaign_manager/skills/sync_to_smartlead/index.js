@@ -25,6 +25,12 @@ export async function executeSkill({ user_details_id, campaign_id }) {
 
   if (!campaign) throw new Error(`Campaign not found: ${campaign_id}`);
 
+  // Dedup: skip if already synced to Smartlead
+  if (campaign.smartlead_campaign_id) {
+    console.log(`[sync_to_smartlead] Campaign ${campaign_id} already synced (smartlead_id=${campaign.smartlead_campaign_id}), skipping`);
+    return { campaign_id, smartlead_campaign_id: campaign.smartlead_campaign_id, skipped: true };
+  }
+
   // Load sender
   const { data: sender } = campaign.sender_id
     ? await admin.from('senders').select('*').eq('id', campaign.sender_id).single()
