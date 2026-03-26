@@ -3,7 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getAnthropic } from '../../../../config/anthropic.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
-import { executeSkill as runContactFinder } from '../contact_finder/index.js';
+import { executeSkill as runEnrichTarget } from '../enrich_target/index.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -283,9 +283,10 @@ export async function executeSkill({ user_details_id, itp_id }) {
 
         if (isHighScore && isNewTarget) {
           try {
-            await runContactFinder({ user_details_id, target_id: targetId, silent: true });
+            await runEnrichTarget({ target_id: targetId, user_details_id, silent: true });
+            await new Promise(r => setTimeout(r, 1000));
           } catch (err) {
-            console.error('[target_finder] inline contact_finder error for', result.link, ':', err.message);
+            console.error('[target_finder] inline enrich_target error for', result.link, ':', err.message);
           }
         }
       }
