@@ -5,6 +5,14 @@ import { dispatchSkill } from '../../../index.js';
 export async function executeSkill({ user_details_id, campaign_id, sender_id }) {
   const admin = getSupabaseAdmin();
 
+  // Dedup: skip if campaign is already active
+  const { data: existing } = await admin
+    .from('campaigns').select('status').eq('id', campaign_id).single();
+  if (existing?.status === 'active') {
+    console.log(`[launch_campaign] Campaign ${campaign_id} already active, skipping`);
+    return { campaign_id, status: 'active', skipped: true };
+  }
+
   // Update campaign with sender and set to active
   const { error } = await admin
     .from('campaigns')
@@ -26,13 +34,14 @@ export async function executeSkill({ user_details_id, campaign_id, sender_id }) 
   console.log('[launch_campaign] Campaign activated, triggering target_finder_100_leads');
 
   // Trigger target_finder_100_leads to fill the campaign with targets
-  if (campaign?.itp_id) {
-    dispatchSkill('lead_gen_expert', 'target_finder_100_leads', {
-      user_details_id,
-      itp_id: campaign.itp_id,
-      campaign_id,
-    }).catch(err => console.error('[launch_campaign] target_finder dispatch error:', err));
-  }
+  // TEMPORARILY DISABLED FOR TESTING
+  // if (campaign?.itp_id) {
+  //   dispatchSkill('lead_gen_expert', 'target_finder_100_leads', {
+  //     user_details_id,
+  //     itp_id: campaign.itp_id,
+  //     campaign_id,
+  //   }).catch(err => console.error('[launch_campaign] target_finder dispatch error:', err));
+  // }
 
   // Sync campaign to Smartlead (testing mode — won't activate)
   dispatchSkill('email_campaign_manager', 'sync_to_smartlead', {
