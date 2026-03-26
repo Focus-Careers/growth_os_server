@@ -45,17 +45,22 @@ export async function saveSequences(campaignId, sequences) {
   const formatted = sequences.map(seq => ({
     seq_number: seq.seq_number,
     seq_delay_details: { delay_in_days: seq.delay_in_days },
-    variant_distribution_type: 'MANUALLY_EQUAL',
-    variants: [{
-      subject: seq.subject,
-      email_body: seq.body,
-      variant_label: 'A',
-    }],
+    subject: seq.subject,
+    email_body: seq.body,
   }));
   const { ok, data } = await smartleadFetch(`/campaigns/${campaignId}/sequences`, {
     method: 'POST',
     body: JSON.stringify({ sequences: formatted }),
   });
+  if (!ok) {
+    // Retry with array format (some API versions expect bare array)
+    console.log('[smartlead] Retrying sequences with bare array format');
+    const retry = await smartleadFetch(`/campaigns/${campaignId}/sequences`, {
+      method: 'POST',
+      body: JSON.stringify(formatted),
+    });
+    return retry.ok ? retry.data : null;
+  }
   return ok ? data : null;
 }
 
