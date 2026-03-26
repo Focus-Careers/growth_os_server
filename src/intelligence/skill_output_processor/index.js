@@ -49,6 +49,122 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
       break;
     }
 
+    case 'lead_gen_expert/target_finder_ten_leads': {
+      const highScoreCount = output.high_score_count ?? 0;
+      const totalTargets = output.total_targets ?? 0;
+
+      await sendAppMessage({
+        type: 'skill_output',
+        employee,
+        skill: skill_name,
+        user_details_id,
+        sidebar: highScoreCount > 0 ? 'approve_targets' : null,
+        output: { high_score_count: highScoreCount, total_targets: totalTargets, itp_id: output.itp_id },
+      });
+      break;
+    }
+
+    case 'lead_gen_expert/target_finder_100_leads': {
+      const approvedCount = output.approved_count ?? 0;
+      const totalTargets = output.total_targets ?? 0;
+
+      if (approvedCount >= output.target_count) {
+        const { data: ud } = await getSupabaseAdmin()
+          .from('user_details').select('queued_mobilisations').eq('id', user_details_id).single();
+        const queue = ud?.queued_mobilisations ?? [];
+        if (!queue.some(q => q.mobilisation === '100_approved_leads_found')) {
+          await getSupabaseAdmin()
+            .from('user_details')
+            .update({ queued_mobilisations: [...queue, { mobilisation: '100_approved_leads_found', queued_at: new Date().toISOString() }] })
+            .eq('id', user_details_id);
+          console.log('[skill_output_processor] Queued 100_approved_leads_found for user', user_details_id);
+        }
+      }
+
+      await sendAppMessage({
+        type: 'skill_output',
+        employee,
+        skill: skill_name,
+        user_details_id,
+        sidebar: null,
+        output: { approved_count: approvedCount, total_targets: totalTargets, itp_id: output.itp_id },
+      });
+      break;
+    }
+
+    case 'lead_gen_expert/itp_refiner': {
+      await sendAppMessage({
+        type: 'skill_output',
+        employee,
+        skill: skill_name,
+        user_details_id,
+        sidebar: null,
+        output,
+      });
+      break;
+    }
+
+    case 'lead_gen_expert/contact_finder': {
+      const contactCount = output.contacts?.length ?? 0;
+      await sendAppMessage({
+        type: 'skill_output',
+        employee,
+        skill: skill_name,
+        user_details_id,
+        sidebar: null,
+        output: { lead_id: output.lead_id, contact_count: contactCount },
+      });
+      break;
+    }
+
+    case 'email_campaign_manager/create_new_sender': {
+      await sendAppMessage({
+        type: 'skill_output',
+        employee,
+        skill: skill_name,
+        user_details_id,
+        sidebar: null,
+        output,
+      });
+      break;
+    }
+
+    case 'email_campaign_manager/create_campaign': {
+      await sendAppMessage({
+        type: 'skill_output',
+        employee,
+        skill: skill_name,
+        user_details_id,
+        sidebar: 'review_email_template',
+        output,
+      });
+      break;
+    }
+
+    case 'email_campaign_manager/sync_to_smartlead': {
+      await sendAppMessage({
+        type: 'skill_output',
+        employee,
+        skill: skill_name,
+        user_details_id,
+        sidebar: null,
+        output,
+      });
+      break;
+    }
+
+    case 'email_campaign_manager/launch_campaign': {
+      await sendAppMessage({
+        type: 'skill_output',
+        employee,
+        skill: skill_name,
+        user_details_id,
+        sidebar: null,
+        output,
+      });
+      break;
+    }
+
     default:
       console.warn(`skill_output_processor: no handler for ${key}`);
   }

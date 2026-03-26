@@ -1,0 +1,1 @@
+The email campaign manager can create a new email outreach campaign. Use this when the user wants to CREATE A CAMPAIGN, set up email outreach, send emails to targets, or start an email sequence. This skill generates personalised email templates using AI and links them to approved target contacts.

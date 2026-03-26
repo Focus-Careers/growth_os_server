@@ -5,6 +5,7 @@ import mobilisationRouter from './mobilisations/router.js';
 import officeAdministratorRouter from './employees/office_administrator/router.js';
 import messagesRouter from './messages/router.js';
 import skillsRouter from './skills/router.js';
+import smartleadWebhookRouter from './webhooks/smartlead.js';
 
 dotenv.config();
 
@@ -20,6 +21,9 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
+
+// Webhooks (before auth middleware — external services call these)
+app.use('/api/webhooks/smartlead', smartleadWebhookRouter);
 
 app.get('/', (req, res) => {
   res.json({ status: 'GrowthOS API running' });

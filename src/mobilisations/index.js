@@ -14,6 +14,9 @@ import needTenMoreLeads from './need_ten_more_leads/index.js';
 import tenApprovedLeadsFound from './ten_approved_leads_found/index.js';
 import tenSeventyPlusLeadsFound from './ten_70_plus_leads_found/index.js';
 import hundredApprovedLeadsFound from './100_approved_leads_found/index.js';
+import initiateCreateCampaign from './initiate_create_campaign/index.js';
+import setupSender from './setup_sender/index.js';
+import reviewCampaign from './review_campaign/index.js';
 import { getStepFromFlow, getFlowConfig } from './step_loader.js';
 import { dispatchSkill } from '../employees/index.js';
 import { getSupabaseAdmin } from '../config/supabase.js';
@@ -29,6 +32,9 @@ const mobilisations = {
   ten_approved_leads_found: tenApprovedLeadsFound,
   ten_70_plus_leads_found: tenSeventyPlusLeadsFound,
   '100_approved_leads_found': hundredApprovedLeadsFound,
+  initiate_create_campaign: initiateCreateCampaign,
+  setup_sender: setupSender,
+  review_campaign: reviewCampaign,
 };
 
 export async function triggerMobilisation(name, messages, context = {}) {
@@ -69,14 +75,21 @@ export async function completeMobilisation(mobilisationName, responses, messages
     }
   }
 
-  if (on_complete.mobilisation) {
-    return { next_mobilisation: on_complete.mobilisation };
-  }
-
   if (on_complete.condition) {
     const { step, value } = on_complete.condition;
     console.log(`[completeMobilisation] condition check: responses["${step}"] = "${responses[step]}" vs "${value}" → ${responses[step] === value ? 'PASS' : 'FAIL'}`);
     if (responses[step] !== value) return null;
+  }
+
+  if (on_complete.mobilisation) {
+    // Set active_mobilisation to the next one immediately to prevent message processor gap
+    if (user_details_id) {
+      await getSupabaseAdmin()
+        .from('user_details')
+        .update({ active_mobilisation: on_complete.mobilisation })
+        .eq('id', user_details_id);
+    }
+    return { next_mobilisation: on_complete.mobilisation };
   }
 
   if (!on_complete.employee) return null;

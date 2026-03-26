@@ -5,31 +5,29 @@ steps:
   - id: "ten_approved"
     type: "option_set"
     messages:
-      - "Just spoke with Belfort. Great news - we've got ten leads approved."
-      - "That means we can get him to go out and find leads without approval."
-      - "Finding the right leads isn't always a quick process. Shall we task him with finding another 100 with good scores and then check back in?"
+      - "Great news — your ITP is looking solid. We've got 10 approved targets with contact details, which means your ideal target profile is dialled in."
+      - "The next step is to set up your first email campaign. I'll get Draper on it — we just need a few details from you."
+      - "Ready to create your campaign?"
     options:
       - id: 1
-        message: "Yes please"
-        next_id: "yes_more"
+        message: "Let's do it"
+        next_id: "complete"
       - id: 2
-        message: "Not right now."
-        next_id: "no_more"
+        message: "Not right now"
+        next_id: "later"
 
-  - id: "yes_more"
+  - id: "complete"
     type: "end_flow"
     messages:
-      - "Great. He's already hard at work. You can sit back and relax - I'll let you know when done."
+      - "Great — let's get started."
 
-  - id: "no_more"
+  - id: "later"
     type: "end_flow"
     messages:
-      - "No worries, we'll come back to it later."
+      - "No worries. Just let me know when you're ready to set up a campaign."
 
 on_complete:
   condition:
     step: "ten_approved"
-    value: "Yes please"
-  employee: "lead_gen_expert"
-  skill: "target_finder_100_leads"
-  inputs: {}
+    value: "Let's do it"
+  mobilisation: "initiate_create_campaign"

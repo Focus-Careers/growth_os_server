@@ -5,5 +5,5 @@ steps:
   - id: "notify"
     type: "end_flow"
     messages:
-      - "{{user_first_name}} - just wanted to drop you an update from Belfort. He's found some leads that need your approval."
+      - "{{user_first_name}} - just wanted to drop you an update from Belfort. He's found some targets that need your approval."
       - "Head over to see if they fit the bill."

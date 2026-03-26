@@ -5,9 +5,9 @@ steps:
   - id: "need_more_leads"
     type: "option_set"
     messages:
-      - "I just spoke with Belfort. He let me know that you've gone through the list of leads he provided."
-      - "As we don't have ten approved leads yet, shall we get him to keep searching?"
-      - "Once we have ten approvals, we have a solid base to find more leads automatically - you won't need to keep approving them."
+      - "I just spoke with Belfort. He let me know that you've gone through the list of targets he provided."
+      - "As we don't have ten approved targets yet, shall we get him to keep searching?"
+      - "Once we have ten approvals, we have a solid base to find more targets automatically - you won't need to keep approving them."
     options:
       - id: 1
         message: "Yes - let's get him to keep searching."

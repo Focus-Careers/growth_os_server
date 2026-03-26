@@ -71,6 +71,6 @@ steps:
   - id: "complete"
     type: "end_flow"
     messages:
-      - "{{user_first_name}} - thanks for the info. I've asked my lead generation expert to go away and find ten leads that match this ideal target profile."
-      - "I'll shoot you a message when that's done. When they are finished, you can go and approve the leads, or decline them with feedback if you think they aren't quite right."
-      - "Once we have enough approved leads, we can create a campaign and decide what to do with them!"
+      - "{{user_first_name}} - thanks for the info. I've asked my lead generation expert to go away and find ten targets that match this ideal target profile."
+      - "I'll shoot you a message when that's done. When they are finished, you can go and approve the targets, or decline them with feedback if you think they aren't quite right."
+      - "Once we have enough approved targets, we can create a campaign and decide what to do with them!"

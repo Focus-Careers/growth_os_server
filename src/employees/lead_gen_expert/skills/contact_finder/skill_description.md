@@ -3,7 +3,7 @@ This skill finds key contacts at target lead organisations, identifying decision
 
 # Inputs
 user_details_id: text (FK to user_details, used to save messages back to the chat)
-lead_id: text (FK to leads, the organisation to find contacts for)
+lead_id: text (FK to targets, the organisation to find contacts for)
 
 # Process
 1. Retrieves the lead's organisation details.

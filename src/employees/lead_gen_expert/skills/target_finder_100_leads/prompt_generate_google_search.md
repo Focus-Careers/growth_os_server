@@ -14,9 +14,9 @@ Demographics: {{itp_demographic}}
 Pain Points: {{itp_pain_points}}
 Buying Trigger: {{itp_buying_trigger}}
 
-You also have access to the leads that have been found in previous queries which are included below, including reasons and scores. You can review the reasons that they scored as they did to influence the query you will return.
+You also have access to the targets that have been found in previous queries which are included below, including reasons and scores. You can review the reasons that they scored as they did to influence the query you will return.
 
-Array of previous leads: 
-{{previous_leads}}
+Array of previous targets:
+{{previous_targets}}
 
 CRITICAL: Respond with only the search query itself. No explanation, no punctuation around it, no quotes. Just the raw query string.

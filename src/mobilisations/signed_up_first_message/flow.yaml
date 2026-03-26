@@ -4,13 +4,36 @@ start_id: "time_to_start"
 steps:
   - id: "time_to_start"
     messages:
-      - "It's time to start marketing."
-      - "Any specific ideas you want to focus on first - or should I take the lead?"
-    type: "free_type"
-    next_id: "complete"
+      - "The first thing I'd recommend is finding some target companies that match your ideal profile. I'll get Belfort on it — he'll search the web, score each company against your ITP, and find contact details."
+      - "Once he's done, you'll review the results to make sure we're on the right track. Sound good?"
+    type: "option_set_with_input"
+    next_id: "free_chat"
+    options:
+      - id: 1
+        message: "Let's do it"
+        next_id: "complete_find_targets"
+      - id: 2
+        message: "Not right now"
+        next_id: "free_chat"
 
-  - id: "complete"
-    messages: []
+  - id: "complete_find_targets"
     type: "end_flow"
+    messages:
+      - "Great — Belfort's on it. I'll let you know when the results are ready."
 
-on_complete: {}
+  - id: "free_chat"
+    type: "end_flow"
+    messages:
+      - "No worries. Just let me know when you're ready to get started — I'm here whenever you need me."
+
+on_complete:
+  db_updates:
+    - table: "user_details"
+      match_field: "id"
+      match_value: "@user_details_id"
+      set:
+        signup_complete: true
+  condition:
+    step: "time_to_start"
+    value: "Let's do it"
+  mobilisation: "initiate_target_finder_ten_leads"

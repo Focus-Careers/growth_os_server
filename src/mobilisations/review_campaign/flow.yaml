@@ -1,0 +1,22 @@
+name: "review_campaign"
+start_id: "sender_setup"
+
+steps:
+  - id: "sender_setup"
+    type: "sidebar"
+    sidebar: "select_sender"
+    messages:
+      - "Great — now let's set up who the emails will come from. Choose an existing sender or create a new one."
+    next_id: "launching"
+
+  - id: "launching"
+    type: "end_flow"
+    messages:
+      - "Your campaign is all set up. I'm going to get the team to start finding more targets for this campaign now — they'll be added automatically as they're found."
+
+on_complete:
+  employee: "email_campaign_manager"
+  skill: "launch_campaign"
+  inputs:
+    campaign_id: "campaign_id"
+    sender_id: "sender_id"

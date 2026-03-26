@@ -1,0 +1,79 @@
+name: "initiate_create_campaign"
+start_id: "intro"
+
+steps:
+  - id: "intro"
+    type: "option_set"
+    messages:
+      - "Let's set up an email campaign to reach out to your targets."
+      - "I'll get the campaign manager to draft one for you. Sound good?"
+    options:
+      - id: 1
+        message: "Yes, let's do it"
+        next_id: "select_itp_sidebar"
+      - id: 2
+        message: "Not right now"
+        next_id: "cancel"
+
+  - id: "select_itp_sidebar"
+    type: "sidebar"
+    sidebar: "select_campaign_itp"
+    messages:
+      - "First, select which ITP you'd like to target with this campaign."
+    next_id: "campaign_name"
+
+  - id: "campaign_name"
+    type: "free_type"
+    messages:
+      - "What do you want to call this campaign?"
+    response_key: "campaign_name"
+    next_id: "num_emails"
+
+  - id: "num_emails"
+    type: "option_set"
+    messages:
+      - "How many follow-up emails should be in the sequence?"
+    options:
+      - id: 1
+        message: "1 email"
+        next_id: "tone"
+      - id: 2
+        message: "3 email sequence"
+        next_id: "tone"
+      - id: 3
+        message: "5 email sequence"
+        next_id: "tone"
+
+  - id: "tone"
+    type: "option_set"
+    messages:
+      - "What tone should the emails have?"
+    options:
+      - id: 1
+        message: "Professional"
+        next_id: "complete"
+      - id: 2
+        message: "Friendly & casual"
+        next_id: "complete"
+      - id: 3
+        message: "Direct & punchy"
+        next_id: "complete"
+
+  - id: "cancel"
+    type: "end_flow"
+    messages:
+      - "No problem. Let me know when you're ready to set up a campaign."
+
+  - id: "complete"
+    type: "end_flow"
+    messages:
+      - "Great choices. I'm handing this over to the campaign manager now — they'll draft your campaign."
+
+on_complete:
+  employee: "email_campaign_manager"
+  skill: "create_campaign"
+  inputs:
+    itp_id: "itp_id"
+    campaign_name: "campaign_name"
+    num_emails: "num_emails"
+    tone: "tone"

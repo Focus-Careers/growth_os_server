@@ -3,6 +3,8 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getAnthropic } from '../../../../config/anthropic.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
+import { executeSkill as runEnrichTarget } from '../enrich_target/index.js';
+import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HIGH_SCORE_THRESHOLD = 70;
@@ -84,33 +86,23 @@ export async function executeSkill({ user_details_id, itp_id }) {
     // Fetch all current leads for this ITP
     const { data: currentLeads } = await getSupabaseAdmin()
       .from('leads')
-      .select('id, title, link, score, score_reason, rejected, target_finder_google_search_prompts')
-      .eq('itp', itp.id);
+      .select('id, target_id, score, score_reason, rejected, search_query_ids, targets(id, domain, title, link)')
+      .eq('itp_id', itp.id);
 
     const highScoreCount = (currentLeads ?? []).filter(l => (l.score ?? 0) >= HIGH_SCORE_THRESHOLD && !l.rejected).length;
     console.log(`[target_finder] Iteration ${iteration + 1}: ${highScoreCount}/${TARGET_HIGH_SCORE_COUNT} high-score leads`);
 
     if (highScoreCount >= TARGET_HIGH_SCORE_COUNT) {
       console.log('[target_finder] Target reached, stopping.');
-      const { data: ud } = await getSupabaseAdmin()
-        .from('user_details').select('queued_mobilisations').eq('id', user_details_id).single();
-      const queue = ud?.queued_mobilisations ?? [];
-      if (!queue.some(q => q.mobilisation === 'ten_70_plus_leads_found')) {
-        await getSupabaseAdmin()
-          .from('user_details')
-          .update({ queued_mobilisations: [...queue, { mobilisation: 'ten_70_plus_leads_found', queued_at: new Date().toISOString() }] })
-          .eq('id', user_details_id);
-        console.log('[target_finder] Queued ten_70_plus_leads_found for user', user_details_id);
-      }
       break;
     }
 
-    // Build previous leads string for the search prompt
-    let previousLeadsText = 'None yet.';
+    // Build previous targets string for the search prompt
+    let previousTargetsText = 'None yet.';
     if (currentLeads && currentLeads.length > 0) {
       // Collect unique search prompt IDs to fetch query text
       const promptIds = [...new Set(
-        currentLeads.flatMap(l => (l.target_finder_google_search_prompts ?? []).map(p => p.id)).filter(Boolean)
+        currentLeads.flatMap(l => (l.search_query_ids ?? []).map(p => p.id)).filter(Boolean)
       )];
       const { data: searchPrompts } = await getSupabaseAdmin()
         .from('target_finder_google_search_prompts')
@@ -119,15 +111,16 @@ export async function executeSkill({ user_details_id, itp_id }) {
 
       const queryById = new Map((searchPrompts ?? []).map(p => [p.id, p.query]));
 
-      previousLeadsText = currentLeads.map(l => {
-        const firstPromptId = l.target_finder_google_search_prompts?.[0]?.id;
+      previousTargetsText = currentLeads.map(l => {
+        const firstPromptId = l.search_query_ids?.[0]?.id;
         const query = firstPromptId ? (queryById.get(firstPromptId) ?? 'unknown') : 'unknown';
-        return `- Title: ${l.title ?? 'N/A'} | Website: ${l.link ?? 'N/A'} | Query: "${query}" | Score: ${l.score ?? 'N/A'} | Reason: ${l.score_reason ?? 'N/A'}`;
+        const target = l.targets;
+        return `- Title: ${target?.title ?? 'N/A'} | Website: ${target?.link ?? 'N/A'} | Query: "${query}" | Score: ${l.score ?? 'N/A'} | Reason: ${l.score_reason ?? 'N/A'}`;
       }).join('\n');
     }
 
     // Generate search query
-    const searchPrompt = fillTemplate(searchPromptTemplate, { '{{previous_leads}}': previousLeadsText });
+    const searchPrompt = fillTemplate(searchPromptTemplate, { '{{previous_targets}}': previousTargetsText });
     const searchResponse = await callClaude({
       model: 'claude-sonnet-4-6',
       max_tokens: 256,
@@ -170,48 +163,57 @@ export async function executeSkill({ user_details_id, itp_id }) {
 
     const organic = serperData.organic ?? [];
 
-    // Re-fetch existing leads (updated each iteration)
-    const { data: existingLeads } = await getSupabaseAdmin()
-      .from('leads')
-      .select('id, link, target_finder_google_search_prompts')
-      .eq('itp', itp.id);
-
-    const existingLeadsByLink = new Map(
-      (existingLeads ?? []).map(l => [l.link?.toLowerCase(), l])
-    );
-
-    // Separate into new vs already-seen
-    const newLeads = [];
+    // Separate into new vs already-seen by domain
+    const newResults = [];
     for (const result of organic) {
       if (!result.link) continue;
-      const lowerLink = result.link.toLowerCase();
 
-      if (existingWebsites.has(lowerLink)) continue;
+      // Extract domain
+      let domain;
+      try {
+        domain = new URL(result.link).hostname.replace(/^www\./, '');
+      } catch { continue; }
 
-      if (existingLeadsByLink.has(lowerLink)) {
-        const existing = existingLeadsByLink.get(lowerLink);
-        const updatedPrompts = [
-          ...(existing.target_finder_google_search_prompts ?? []),
-          { id: searchPromptId, position: result.position },
-        ];
-        await getSupabaseAdmin()
-          .from('leads')
-          .update({ target_finder_google_search_prompts: updatedPrompts })
-          .eq('id', existing.id);
+      // Skip existing customers
+      if (existingWebsites.has(result.link.toLowerCase())) continue;
+
+      // Check if target already exists by domain
+      const { data: existingTarget } = await getSupabaseAdmin()
+        .from('targets').select('id').eq('domain', domain).maybeSingle();
+
+      if (existingTarget) {
+        // Target exists — check if lead already exists for this target+ITP
+        const { data: existingLead } = await getSupabaseAdmin()
+          .from('leads').select('id, search_query_ids').eq('target_id', existingTarget.id).eq('itp_id', itp.id).maybeSingle();
+
+        if (existingLead) {
+          // Update search_query_ids on existing lead
+          const updatedQueryIds = [
+            ...(existingLead.search_query_ids ?? []),
+            { id: searchPromptId, position: result.position },
+          ];
+          await getSupabaseAdmin()
+            .from('leads')
+            .update({ search_query_ids: updatedQueryIds })
+            .eq('id', existingLead.id);
+        } else {
+          // Will be scored with new results below
+          newResults.push({ ...result, _domain: domain, _existingTargetId: existingTarget.id });
+        }
       } else {
-        newLeads.push(result);
+        newResults.push({ ...result, _domain: domain, _existingTargetId: null });
       }
     }
 
-    console.log('[target_finder] New leads to score:', newLeads.length);
+    console.log('[target_finder] New results to score:', newResults.length);
 
-    if (newLeads.length > 0) {
-      // Build a numbered list of all leads for Claude to score in one call
-      const leadsList = newLeads.map((r, i) =>
+    if (newResults.length > 0) {
+      // Build a numbered list of all targets for Claude to score in one call
+      const targetsList = newResults.map((r, i) =>
         `[${i}] Title: ${r.title ?? 'N/A'}\nURL: ${r.link}\nSnippet: ${r.snippet ?? ''}`
       ).join('\n\n');
 
-      const scorePrompt = scorePromptBase.replace('{{response_from_serper}}', leadsList);
+      const scorePrompt = scorePromptBase.replace('{{response_from_serper}}', targetsList);
 
       const scoreResponse = await callClaude({
         model: 'claude-sonnet-4-6',
@@ -229,20 +231,53 @@ export async function executeSkill({ user_details_id, itp_id }) {
       }
 
       for (const item of scores) {
-        const result = newLeads[item.index];
+        const result = newResults[item.index];
         if (!result) continue;
-        console.log('[target_finder] Scored lead:', result.link, '→', item.score, item.reason);
+        console.log('[target_finder] Scored target:', result.link, '→', item.score, item.reason);
 
-        const { error: insertError } = await getSupabaseAdmin().from('leads').insert({
-          itp: itp.id,
-          title: result.title ?? null,
-          link: result.link ?? null,
-          snippet: result.snippet ?? null,
-          score: item.score ?? null,
-          score_reason: item.reason ?? null,
-          target_finder_google_search_prompts: [{ id: searchPromptId, position: result.position }],
-        });
-        if (insertError) console.error('[target_finder] Insert error for', result.link, ':', insertError);
+        let targetId;
+        const isNewTarget = !result._existingTargetId;
+
+        if (result._existingTargetId) {
+          targetId = result._existingTargetId;
+        } else {
+          const { data: newTarget, error: insertError } = await getSupabaseAdmin()
+            .from('targets')
+            .insert({ domain: result._domain, title: result.title ?? null, link: result.link ?? null, snippet: result.snippet ?? null })
+            .select('id').single();
+          if (insertError) {
+            console.error('[target_finder] Target insert error for', result.link, ':', insertError);
+            continue;
+          }
+          targetId = newTarget.id;
+        }
+
+        // Only create lead rows for targets scoring above threshold
+        if ((item.score ?? 0) >= HIGH_SCORE_THRESHOLD) {
+          const { error: leadError } = await getSupabaseAdmin()
+            .from('leads')
+            .insert({
+              target_id: targetId,
+              itp_id: itp.id,
+              score: item.score ?? null,
+              score_reason: item.reason ?? null,
+              search_query_ids: [{ id: searchPromptId, position: result.position }],
+            })
+            .select('id').single();
+
+          if (leadError) {
+            console.error('[target_finder] Lead insert error for', result.link, ':', leadError);
+          }
+        }
+
+        if ((item.score ?? 0) >= HIGH_SCORE_THRESHOLD && isNewTarget) {
+          try {
+            await runEnrichTarget({ target_id: targetId, user_details_id, silent: true });
+            await new Promise(r => setTimeout(r, 1000));
+          } catch (err) {
+            console.error('[target_finder] inline enrich_target error for', result.link, ':', err.message);
+          }
+        }
       }
     }
   }
@@ -250,8 +285,21 @@ export async function executeSkill({ user_details_id, itp_id }) {
   // Final count
   const { data: finalLeads } = await getSupabaseAdmin()
     .from('leads')
-    .select('id, title, link, score, score_reason')
-    .eq('itp', itp.id);
+    .select('id, score, rejected, target_id, targets(id, title, link)')
+    .eq('itp_id', itp.id);
+
+  const highScoreTotal = (finalLeads ?? []).filter(l => (l.score ?? 0) >= HIGH_SCORE_THRESHOLD && !l.rejected).length;
+
+  await processSkillOutput({
+    employee: 'lead_gen_expert',
+    skill_name: 'target_finder_ten_leads',
+    user_details_id,
+    output: {
+      itp_id: itp.id,
+      high_score_count: highScoreTotal,
+      total_leads: (finalLeads ?? []).length,
+    },
+  });
 
   return { user_details_id, itp_id: itp.id, leads: finalLeads ?? [] };
 }
