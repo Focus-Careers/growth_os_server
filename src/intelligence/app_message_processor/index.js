@@ -59,28 +59,28 @@ export async function processMessage(record) {
 
   let activeContext = '';
   if (ud?.account_id) {
-    const { data: pendingTargets } = await getSupabaseAdmin()
-      .from('targets').select('id', { count: 'exact', head: true }).eq('approved', false).eq('rejected', false);
+    const { data: pendingLeads } = await getSupabaseAdmin()
+      .from('leads').select('id', { count: 'exact', head: true }).eq('approved', false).eq('rejected', false);
     const { data: campaigns } = await getSupabaseAdmin()
       .from('campaigns').select('id, name, status').eq('account_id', ud.account_id);
 
-    // Check if ITP is validated (10+ approved targets)
-    const { data: approvedTargets } = await getSupabaseAdmin()
-      .from('targets')
+    // Check if ITP is validated (10+ approved leads)
+    const { data: approvedLeads } = await getSupabaseAdmin()
+      .from('leads')
       .select('id', { count: 'exact', head: true })
       .eq('approved', true);
 
-    const itpValidated = (approvedTargets?.length ?? 0) >= 10;
+    const itpValidated = (approvedLeads?.length ?? 0) >= 10;
 
     const contextParts = [];
-    if (pendingTargets?.length) contextParts.push(`Target finder is already running or has ${pendingTargets.length} targets awaiting approval in the Belfort tab.`);
+    if (pendingLeads?.length) contextParts.push(`Target finder is already running or has ${pendingLeads.length} leads awaiting approval in the Belfort tab.`);
     if (ud.queued_mobilisations?.length) contextParts.push(`There are ${ud.queued_mobilisations.length} queued actions waiting to run.`);
     if (campaigns?.length) contextParts.push(`Existing campaigns: ${campaigns.map(c => `${c.name} (${c.status})`).join(', ')}.`);
 
     if (!itpValidated) {
-      contextParts.push('The ITP has NOT been validated yet (fewer than 10 approved targets). If the user wants to create a campaign, explain that we need to find and approve targets first to make sure the ITP is accurate. Suggest starting with target finding instead.');
+      contextParts.push('The ITP has NOT been validated yet (fewer than 10 approved leads). If the user wants to create a campaign, explain that we need to find and approve leads first to make sure the ITP is accurate. Suggest starting with target finding instead.');
     } else {
-      contextParts.push('The ITP has been validated with 10+ approved targets. Campaign creation is available.');
+      contextParts.push('The ITP has been validated with 10+ approved leads. Campaign creation is available.');
     }
     if (contextParts.length) activeContext = `\n\n# Current State\n${contextParts.join('\n')}\nDo NOT suggest skills that are already in progress or recently completed. If targets are already being found or awaiting approval, do not trigger target_finder again.`;
   }

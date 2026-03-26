@@ -66,41 +66,68 @@ async function revealEmail(firstName, lastName, domain) {
   return email;
 }
 
-export async function executeSkill({ user_details_id, lead_id, silent = false }) {
-  console.log(`[contact_finder] Starting for lead ${lead_id}`);
+export async function executeSkill({ user_details_id, target_id, lead_id, silent = false }) {
+  // Accept target_id or lead_id (backward compat)
+  const resolvedTargetId = target_id ?? lead_id;
+  console.log(`[contact_finder] Starting for target ${resolvedTargetId}`);
 
-  const { data: lead } = await getSupabaseAdmin()
+  const { data: target } = await getSupabaseAdmin()
     .from('targets')
-    .select('id, title, link, itp')
-    .eq('id', lead_id)
+    .select('id, title, link, domain')
+    .eq('id', resolvedTargetId)
     .single();
 
-  if (!lead) throw new Error(`Lead ${lead_id} not found`);
+  if (!target) throw new Error(`Target ${resolvedTargetId} not found`);
 
-  const { data: itp } = await getSupabaseAdmin()
-    .from('itp')
-    .select('itp_demographic, account_id')
-    .eq('id', lead.itp)
-    .single();
+  // Get ITP demographic via leads table
+  const { data: leadForItp } = await getSupabaseAdmin()
+    .from('leads')
+    .select('itp_id')
+    .eq('target_id', resolvedTargetId)
+    .limit(1)
+    .maybeSingle();
 
-  if (!itp) throw new Error(`ITP not found for lead ${lead_id}`);
-
-  let domain;
-  try {
-    domain = new URL(lead.link).hostname.replace(/^www\./, '');
-  } catch {
-    throw new Error(`Invalid lead URL: ${lead.link}`);
+  let itpDemographic = null;
+  let accountId = null;
+  if (leadForItp?.itp_id) {
+    const { data: itp } = await getSupabaseAdmin()
+      .from('itp')
+      .select('itp_demographic, account_id')
+      .eq('id', leadForItp.itp_id)
+      .single();
+    itpDemographic = itp?.itp_demographic ?? null;
+    accountId = itp?.account_id ?? null;
   }
 
-  console.log(`[contact_finder] Lead URL: ${lead.link} → domain: ${domain}`);
+  if (!accountId) {
+    // Fallback: get account_id from user_details
+    const { data: ud } = await getSupabaseAdmin()
+      .from('user_details').select('account_id').eq('id', user_details_id).single();
+    accountId = ud?.account_id;
+  }
+
+  let domain = target.domain;
+  if (!domain) {
+    try {
+      domain = new URL(target.link).hostname.replace(/^www\./, '');
+    } catch {
+      throw new Error(`Invalid target URL: ${target.link}`);
+    }
+  }
+
+  console.log(`[contact_finder] Target URL: ${target.link} → domain: ${domain}`);
 
   // Extract decision maker titles from ITP demographic
   let titles;
-  try {
-    titles = await getDecisionMakerTitles(itp.itp_demographic);
-    console.log(`[contact_finder] Decision maker titles:`, titles);
-  } catch (e) {
-    console.error('[contact_finder] Failed to extract titles, using fallback:', e.message);
+  if (itpDemographic) {
+    try {
+      titles = await getDecisionMakerTitles(itpDemographic);
+      console.log(`[contact_finder] Decision maker titles:`, titles);
+    } catch (e) {
+      console.error('[contact_finder] Failed to extract titles, using fallback:', e.message);
+      titles = ['Director', 'Managing Director', 'CEO', 'Owner', 'Head of Procurement', 'Purchasing Manager'];
+    }
+  } else {
     titles = ['Director', 'Managing Director', 'CEO', 'Owner', 'Head of Procurement', 'Purchasing Manager'];
   }
 
@@ -117,7 +144,7 @@ export async function executeSkill({ user_details_id, lead_id, silent = false })
 
   if (people.length === 0) {
     console.log(`[contact_finder] No people found for ${domain} after fallback`);
-    return { user_details_id, lead_id, contacts: [] };
+    return { user_details_id, target_id: resolvedTargetId, contacts: [] };
   }
 
   const saved = [];
@@ -142,7 +169,7 @@ export async function executeSkill({ user_details_id, lead_id, silent = false })
     const { data: existing } = await getSupabaseAdmin()
       .from('contacts')
       .select('id')
-      .eq('lead_id', lead_id)
+      .eq('target_id', resolvedTargetId)
       .eq('email', email)
       .maybeSingle();
 
@@ -154,8 +181,8 @@ export async function executeSkill({ user_details_id, lead_id, silent = false })
     const { data: contact, error } = await getSupabaseAdmin()
       .from('contacts')
       .insert({
-        account_id: itp.account_id,
-        lead_id,
+        account_id: accountId,
+        target_id: resolvedTargetId,
         first_name: person.first_name ?? null,
         last_name: person.last_name ?? null,
         email,
@@ -172,16 +199,16 @@ export async function executeSkill({ user_details_id, lead_id, silent = false })
     }
   }
 
-  console.log(`[contact_finder] Done — ${saved.length} contacts saved for lead ${lead_id}`);
+  console.log(`[contact_finder] Done — ${saved.length} contacts saved for target ${resolvedTargetId}`);
 
   if (!silent) {
     await processSkillOutput({
       employee: 'lead_gen_expert',
       skill_name: 'contact_finder',
       user_details_id,
-      output: { lead_id, contacts: saved },
+      output: { target_id: resolvedTargetId, contacts: saved },
     });
   }
 
-  return { user_details_id, lead_id, contacts: saved };
+  return { user_details_id, target_id: resolvedTargetId, contacts: saved };
 }

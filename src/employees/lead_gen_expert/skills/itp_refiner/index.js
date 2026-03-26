@@ -15,15 +15,15 @@ export async function executeSkill({ user_details_id, itp_id }) {
   const { data: itp } = await admin.from('itp').select('*').eq('id', itp_id).single();
   if (!itp) throw new Error(`ITP not found: ${itp_id}`);
 
-  // Load all rejected targets with reasons for this ITP
-  const { data: rejectedTargets } = await admin
-    .from('targets')
-    .select('id, title, link, score, score_reason, rejection_reason')
-    .eq('itp', itp_id)
+  // Load all rejected leads with reasons for this ITP, joining target data
+  const { data: rejectedLeads } = await admin
+    .from('leads')
+    .select('id, target_id, score, score_reason, rejection_reason, targets(title, link)')
+    .eq('itp_id', itp_id)
     .eq('rejected', true)
     .not('rejection_reason', 'is', null);
 
-  const rejections = (rejectedTargets ?? []).filter(t => t.rejection_reason?.trim());
+  const rejections = (rejectedLeads ?? []).filter(l => l.rejection_reason?.trim());
 
   if (rejections.length === 0) {
     console.log('[itp_refiner] No rejection reasons found, skipping refinement');
@@ -46,12 +46,12 @@ export async function executeSkill({ user_details_id, itp_id }) {
       buying_trigger: itp.itp_buying_trigger,
       location: itp.location,
     },
-    rejections: rejections.map(t => ({
-      company: t.title,
-      url: t.link,
-      score: t.score,
-      score_reason: t.score_reason,
-      user_rejection_reason: t.rejection_reason,
+    rejections: rejections.map(l => ({
+      company: l.targets?.title,
+      url: l.targets?.link,
+      score: l.score,
+      score_reason: l.score_reason,
+      user_rejection_reason: l.rejection_reason,
     })),
   }, null, 2);
 

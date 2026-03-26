@@ -97,27 +97,27 @@ export async function executeSkill({ user_details_id, itp_id, campaign_name, num
     return { error: 'insert_failed' };
   }
 
-  // Auto-populate campaign_contacts from approved targets with contacts
-  const { data: contacts } = await admin
-    .from('contacts')
-    .select('id, lead_id')
-    .eq('account_id', userDetails.account_id);
+  // Auto-populate campaign_contacts from approved leads with contacts
+  // First get approved leads for this ITP
+  const { data: approvedLeads } = await admin
+    .from('leads')
+    .select('target_id')
+    .eq('itp_id', itp_id)
+    .eq('approved', true);
 
-  // Filter to contacts whose target belongs to this ITP and is approved
-  if (contacts?.length) {
-    const { data: approvedTargets } = await admin
-      .from('targets')
+  const approvedTargetIds = (approvedLeads ?? []).map(l => l.target_id);
+
+  if (approvedTargetIds.length) {
+    // Get contacts for those targets
+    const { data: contacts } = await admin
+      .from('contacts')
       .select('id')
-      .eq('itp', itp_id)
-      .eq('approved', true);
+      .in('target_id', approvedTargetIds);
 
-    const approvedTargetIds = new Set((approvedTargets ?? []).map(t => t.id));
-    const matchingContacts = contacts.filter(c => approvedTargetIds.has(c.lead_id));
-
-    if (matchingContacts.length) {
+    if (contacts?.length) {
       const { error: ccError } = await admin
         .from('campaign_contacts')
-        .insert(matchingContacts.map(c => ({
+        .insert(contacts.map(c => ({
           campaign_id: campaign.id,
           contact_id: c.id,
         })));
