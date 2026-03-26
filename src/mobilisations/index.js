@@ -16,6 +16,7 @@ import tenSeventyPlusLeadsFound from './ten_70_plus_leads_found/index.js';
 import hundredApprovedLeadsFound from './100_approved_leads_found/index.js';
 import initiateCreateCampaign from './initiate_create_campaign/index.js';
 import setupSender from './setup_sender/index.js';
+import reviewCampaign from './review_campaign/index.js';
 import { getStepFromFlow, getFlowConfig } from './step_loader.js';
 import { dispatchSkill } from '../employees/index.js';
 import { getSupabaseAdmin } from '../config/supabase.js';
@@ -33,6 +34,7 @@ const mobilisations = {
   '100_approved_leads_found': hundredApprovedLeadsFound,
   initiate_create_campaign: initiateCreateCampaign,
   setup_sender: setupSender,
+  review_campaign: reviewCampaign,
 };
 
 export async function triggerMobilisation(name, messages, context = {}) {

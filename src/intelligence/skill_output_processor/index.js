@@ -135,6 +135,18 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
         employee,
         skill: skill_name,
         user_details_id,
+        sidebar: 'review_email_template',
+        output,
+      });
+      break;
+    }
+
+    case 'email_campaign_manager/launch_campaign': {
+      await sendAppMessage({
+        type: 'skill_output',
+        employee,
+        skill: skill_name,
+        user_details_id,
         sidebar: null,
         output,
       });

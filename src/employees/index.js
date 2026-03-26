@@ -13,6 +13,7 @@ import { executeSkill as leadGenExpert_itpRefiner } from './lead_gen_expert/skil
 import { executeSkill as businessAnalyst_defineItp } from './business_analyst/skills/define_itp/index.js';
 import { executeSkill as emailCampaignManager_createNewSender } from './email_campaign_manager/skills/create_new_sender/index.js';
 import { executeSkill as emailCampaignManager_createCampaign } from './email_campaign_manager/skills/create_campaign/index.js';
+import { executeSkill as emailCampaignManager_launchCampaign } from './email_campaign_manager/skills/launch_campaign/index.js';
 import { broadcastSkillStatus } from '../intelligence/skill_status_broadcaster/index.js';
 
 // Skill-specific status messages shown to the user while running
@@ -25,6 +26,7 @@ const skillStatusMessages = {
   'business_analyst/define_itp': 'Warren is building your ideal target profile...',
   'email_campaign_manager/create_campaign': 'Draper is drafting your campaign...',
   'email_campaign_manager/create_new_sender': 'Draper is setting up your sender identity...',
+  'email_campaign_manager/launch_campaign': 'Draper is launching your campaign...',
 };
 
 const skills = {
@@ -44,6 +46,7 @@ const skills = {
   email_campaign_manager: {
     create_new_sender: emailCampaignManager_createNewSender,
     create_campaign: emailCampaignManager_createCampaign,
+    launch_campaign: emailCampaignManager_launchCampaign,
   },
 };
 
