@@ -20,7 +20,8 @@ async function loadSkillDescriptions() {
 
   const skills = await Promise.all(descFiles.map(async (relPath) => {
     // relPath e.g. "lead_gen_expert/skills/target_finder/description_for_msg_processor.md"
-    const parts = relPath.split('/');
+    // On Windows, readdir returns backslashes
+    const parts = relPath.replace(/\\/g, '/').split('/');
     const employee = parts[0];
     const skill = parts[2];
     const content = await readFile(join(employeesDir, relPath), 'utf-8');
@@ -59,21 +60,23 @@ export async function processMessage(record) {
 
   let activeContext = '';
   if (ud?.account_id) {
-    const { data: pendingLeads } = await getSupabaseAdmin()
-      .from('leads').select('id', { count: 'exact', head: true }).eq('approved', false).eq('rejected', false);
+    const { count: pendingCount } = await getSupabaseAdmin()
+      .from('leads').select('id', { count: 'exact', head: true })
+      .or('approved.is.null,approved.eq.false')
+      .or('rejected.is.null,rejected.eq.false');
     const { data: campaigns } = await getSupabaseAdmin()
       .from('campaigns').select('id, name, status').eq('account_id', ud.account_id);
 
     // Check if ITP is validated (10+ approved leads)
-    const { data: approvedLeads } = await getSupabaseAdmin()
+    const { count: approvedCount } = await getSupabaseAdmin()
       .from('leads')
       .select('id', { count: 'exact', head: true })
       .eq('approved', true);
 
-    const itpValidated = (approvedLeads?.length ?? 0) >= 10;
+    const itpValidated = (approvedCount ?? 0) >= 10;
 
     const contextParts = [];
-    if (pendingLeads?.length) contextParts.push(`Target finder is already running or has ${pendingLeads.length} leads awaiting approval in the Belfort tab.`);
+    if (pendingCount) contextParts.push(`Target finder is already running or has ${pendingCount} leads awaiting approval.`);
     if (ud.queued_mobilisations?.length) contextParts.push(`There are ${ud.queued_mobilisations.length} queued actions waiting to run.`);
     if (campaigns?.length) contextParts.push(`Existing campaigns: ${campaigns.map(c => `${c.name} (${c.status})`).join(', ')}.`);
 
@@ -91,6 +94,8 @@ export async function processMessage(record) {
     loadSkillDescriptions(),
   ]);
   console.log(`[amp] loaded ${skillDescriptions.length} skill descriptions, calling Claude...`);
+  console.log('[amp] ACTIVE CONTEXT:', activeContext);
+  console.log('[amp] SKILLS:', skillDescriptions.map(s => `${s.employee}/${s.skill}`).join(', '));
 
   // Build system prompt: decision logic + available skill descriptions
   const skillsSection = skillDescriptions.map(({ employee, skill, content }) =>
