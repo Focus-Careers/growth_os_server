@@ -26,7 +26,7 @@ async function callClaude(params, retries = 3) {
   }
 }
 
-export async function executeSkill({ user_details_id, itp_id }) {
+export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
   const { data: userDetails } = await getSupabaseAdmin()
     .from('user_details')
     .select('account_id')
@@ -283,7 +283,22 @@ export async function executeSkill({ user_details_id, itp_id }) {
 
         if (isHighScore && isNewTarget) {
           try {
-            await runEnrichTarget({ target_id: targetId, user_details_id, silent: true });
+            const enrichResult = await runEnrichTarget({ target_id: targetId, user_details_id, silent: true });
+
+            // Add newly found contacts to the campaign
+            if (campaign_id && enrichResult?.contacts?.length) {
+              for (const contact of enrichResult.contacts) {
+                const { error: ccError } = await getSupabaseAdmin()
+                  .from('campaign_contacts')
+                  .insert({ campaign_id, contact_id: contact.id })
+                  .select('id').single();
+                if (ccError && !ccError.message?.includes('duplicate')) {
+                  console.error('[target_finder] campaign_contacts insert error:', ccError.message);
+                }
+              }
+              console.log(`[target_finder] Added ${enrichResult.contacts.length} contacts to campaign ${campaign_id}`);
+            }
+
             await new Promise(r => setTimeout(r, 1000));
           } catch (err) {
             console.error('[target_finder] inline enrich_target error for', result.link, ':', err.message);
