@@ -261,23 +261,27 @@ export async function executeSkill({ user_details_id, itp_id }) {
           targetId = newTarget.id;
         }
 
-        // Insert lead row — auto-approve high scores
+        // Only create lead rows for targets scoring above threshold — auto-approve
         const isHighScore = (item.score ?? 0) >= HIGH_SCORE_THRESHOLD;
-        const { error: leadError } = await getSupabaseAdmin()
-          .from('leads')
-          .insert({
-            target_id: targetId,
-            itp_id: itp.id,
-            score: item.score ?? null,
-            score_reason: item.reason ?? null,
-            approved: isHighScore ? true : null,
-            search_query_ids: [{ id: searchPromptId, position: result.position }],
-          })
-          .select('id').single();
+        if (isHighScore) {
+          const { error: leadError } = await getSupabaseAdmin()
+            .from('leads')
+            .insert({
+              target_id: targetId,
+              itp_id: itp.id,
+              score: item.score ?? null,
+              score_reason: item.reason ?? null,
+              approved: true,
+              search_query_ids: [{ id: searchPromptId, position: result.position }],
+            })
+            .select('id').single();
 
-        if (leadError) {
-          console.error('[target_finder] Lead insert error for', result.link, ':', leadError);
-        } else if (isHighScore && isNewTarget) {
+          if (leadError) {
+            console.error('[target_finder] Lead insert error for', result.link, ':', leadError);
+          }
+        }
+
+        if (isHighScore && isNewTarget) {
           try {
             await runContactFinder({ user_details_id, target_id: targetId, silent: true });
           } catch (err) {
