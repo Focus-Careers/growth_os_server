@@ -59,6 +59,7 @@ export async function getStep(mobilisationName, stepId, value = null, user_detai
 // flow.yaml, maps collected responses to skill inputs, and dispatches.
 // -------------------------------------------------------------------------
 export async function completeMobilisation(mobilisationName, responses, messages = [], user_details_id = null) {
+  console.log(`[completeMobilisation] ${mobilisationName} responses:`, JSON.stringify(responses));
   if (!mobilisations[mobilisationName]) throw new Error(`Unknown mobilisation: ${mobilisationName}`);
 
   const flow = await getFlowConfig(mobilisationName);

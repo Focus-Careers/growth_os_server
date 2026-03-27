@@ -89,7 +89,7 @@ export async function getStepFromFlow(mobilisationName, stepId, value = null, us
     const promptPath = join(__dirname, mobilisationName, step.prompt_file);
     const prompt = await readFile(promptPath, 'utf-8');
     const response = await getAnthropic().messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 256,
       messages: [{ role: 'user', content: prompt }],
     });
