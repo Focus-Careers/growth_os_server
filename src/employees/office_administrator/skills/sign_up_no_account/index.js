@@ -85,7 +85,7 @@ export async function executeSkill({ firstname, email, messages = [] }) {
   const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
     type: 'magiclink',
     email: email.toLowerCase(),
-    options: { redirectTo: process.env.APP_URL },
+    options: { redirectTo: `${process.env.APP_URL}?from=client` },
   });
 
   if (linkError) {
