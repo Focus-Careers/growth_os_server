@@ -42,6 +42,15 @@ export async function executeSkill({ user_details_id, itp_id }) {
 
   if (!itp) throw new Error('No ITP found for account');
 
+  // Count existing high-score leads so we find the NEXT 10, not assume starting from 0
+  const { data: existingLeads } = await getSupabaseAdmin()
+    .from('leads')
+    .select('id, score, rejected')
+    .eq('itp_id', itp.id);
+  const initialHighScoreCount = (existingLeads ?? []).filter(l => (l.score ?? 0) >= HIGH_SCORE_THRESHOLD && !l.rejected).length;
+  const dynamicTarget = initialHighScoreCount + TARGET_HIGH_SCORE_COUNT;
+  console.log(`[target_finder] Starting with ${initialHighScoreCount} existing high-score leads, aiming for ${dynamicTarget}`);
+
   const { data: account } = await getSupabaseAdmin()
     .from('account')
     .select('organisation_name, organisation_website, description, problem_solved')
@@ -90,9 +99,9 @@ export async function executeSkill({ user_details_id, itp_id }) {
       .eq('itp_id', itp.id);
 
     const highScoreCount = (currentLeads ?? []).filter(l => (l.score ?? 0) >= HIGH_SCORE_THRESHOLD && !l.rejected).length;
-    console.log(`[target_finder] Iteration ${iteration + 1}: ${highScoreCount}/${TARGET_HIGH_SCORE_COUNT} high-score leads`);
+    console.log(`[target_finder] Iteration ${iteration + 1}: ${highScoreCount}/${dynamicTarget} high-score leads`);
 
-    if (highScoreCount >= TARGET_HIGH_SCORE_COUNT) {
+    if (highScoreCount >= dynamicTarget) {
       console.log('[target_finder] Target reached, stopping.');
       break;
     }
