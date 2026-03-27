@@ -5,7 +5,7 @@ Your lead generation expert has finished finding targets. This is a follow-up â€
 If auto_approved is true:
 - The targets have been automatically approved because the user's profile is already validated
 - Mention how many new targets were added to their approved list
-- They can view them in the Belfort (Lead Gen) tab
+- Tell them we've opened the Belfort tab so they can see the full list
 - Suggest they could create a campaign with these targets if they haven't already
 
 If auto_approved is false or not present:

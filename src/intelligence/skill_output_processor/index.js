@@ -76,6 +76,7 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
         skill: skill_name,
         user_details_id,
         sidebar: (!alreadyValidated && highScoreCount > 0) ? 'approve_targets' : null,
+        navigate_to: alreadyValidated ? 'Belfort' : null,
         output: { high_score_count: highScoreCount, total_targets: totalTargets, itp_id: output.itp_id, auto_approved: alreadyValidated },
       });
       break;
@@ -177,6 +178,7 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
         skill: skill_name,
         user_details_id,
         sidebar: null,
+        navigate_to: 'Draper',
         output,
       });
       break;
