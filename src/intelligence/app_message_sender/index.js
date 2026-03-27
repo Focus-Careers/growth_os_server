@@ -61,7 +61,7 @@ export async function sendAppMessage({ type, employee, skill, user_details_id, s
   const userMessage = JSON.stringify({ type, employee, skill, output }, null, 2);
 
   const response = await getAnthropic().messages.create({
-    model: 'claude-sonnet-4-6',
+    model: 'claude-haiku-4-5-20251001',
     max_tokens: 1024,
     system: systemPrompt,
     messages: [{ role: 'user', content: userMessage }],

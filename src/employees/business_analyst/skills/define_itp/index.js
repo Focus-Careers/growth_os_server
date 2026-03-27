@@ -12,7 +12,7 @@ export async function executeSkill({ organisation_name, organisation_website, de
   const userMessage = JSON.stringify({ organisation_name, organisation_website, description, problem_solved }, null, 2);
 
   const response = await getAnthropic().messages.create({
-    model: 'claude-opus-4-6',
+    model: 'claude-sonnet-4-6',
     max_tokens: 1024,
     messages: [{ role: 'user', content: `${prompt}\n\nOrganisation details:\n${userMessage}` }],
   });
