@@ -17,6 +17,7 @@ import { executeSkill as emailCampaignManager_createCampaign } from './email_cam
 import { executeSkill as emailCampaignManager_launchCampaign } from './email_campaign_manager/skills/launch_campaign/index.js';
 import { executeSkill as emailCampaignManager_syncToSmartlead } from './email_campaign_manager/skills/sync_to_smartlead/index.js';
 import { broadcastSkillStatus } from '../intelligence/skill_status_broadcaster/index.js';
+import { getSupabaseAdmin } from '../config/supabase.js';
 
 // Skill-specific status messages shown to the user while running
 // Shown in the chat feed (includes employee name)
@@ -88,6 +89,11 @@ export async function dispatchSkill(employee, skill, inputs) {
       message: chatMessage,
       sidebar_message: sidebarMessage,
     });
+    // Track active skill in DB so we can detect incomplete runs on return
+    await getSupabaseAdmin()
+      .from('user_details')
+      .update({ active_skill: { employee, skill, started_at: new Date().toISOString() } })
+      .eq('id', inputs.user_details_id);
   }
 
   try {
@@ -100,6 +106,10 @@ export async function dispatchSkill(employee, skill, inputs) {
         status: 'complete',
         message: null,
       });
+      await getSupabaseAdmin()
+        .from('user_details')
+        .update({ active_skill: null })
+        .eq('id', inputs.user_details_id);
     }
 
     return result;
@@ -111,6 +121,10 @@ export async function dispatchSkill(employee, skill, inputs) {
         status: 'complete',
         message: null,
       });
+      await getSupabaseAdmin()
+        .from('user_details')
+        .update({ active_skill: null })
+        .eq('id', inputs.user_details_id);
     }
     throw err;
   }

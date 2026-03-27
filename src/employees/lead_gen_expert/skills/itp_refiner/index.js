@@ -11,15 +11,25 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export async function executeSkill({ user_details_id, itp_id }) {
   const admin = getSupabaseAdmin();
 
+  // Resolve ITP: use provided id, or fall back to most recent for the account
+  let resolvedItpId = itp_id;
+  if (!resolvedItpId && user_details_id) {
+    const { data: ud } = await admin.from('user_details').select('account_id').eq('id', user_details_id).single();
+    if (ud?.account_id) {
+      const { data: latestItp } = await admin.from('itp').select('id').eq('account_id', ud.account_id).order('created_at', { ascending: false }).limit(1).single();
+      resolvedItpId = latestItp?.id;
+    }
+  }
+
   // Load the current ITP
-  const { data: itp } = await admin.from('itp').select('*').eq('id', itp_id).single();
-  if (!itp) throw new Error(`ITP not found: ${itp_id}`);
+  const { data: itp } = await admin.from('itp').select('*').eq('id', resolvedItpId).single();
+  if (!itp) throw new Error(`ITP not found: ${resolvedItpId}`);
 
   // Load all rejected leads with reasons for this ITP, joining target data
   const { data: rejectedLeads } = await admin
     .from('leads')
     .select('id, target_id, score, score_reason, rejection_reason, targets(title, link)')
-    .eq('itp_id', itp_id)
+    .eq('itp_id', resolvedItpId)
     .eq('rejected', true)
     .not('rejection_reason', 'is', null);
 
@@ -28,9 +38,9 @@ export async function executeSkill({ user_details_id, itp_id }) {
   if (rejections.length === 0) {
     console.log('[itp_refiner] No rejection reasons found, skipping refinement');
     // Just trigger target finder to find more
-    dispatchSkill('lead_gen_expert', 'target_finder_ten_leads', { user_details_id, itp_id })
+    dispatchSkill('lead_gen_expert', 'target_finder_ten_leads', { user_details_id, itp_id: resolvedItpId })
       .catch(err => console.error('[itp_refiner] target_finder dispatch error:', err));
-    return { refined: false, itp_id };
+    return { refined: false, itp_id: resolvedItpId };
   }
 
   // Load the prompt
@@ -55,7 +65,7 @@ export async function executeSkill({ user_details_id, itp_id }) {
     })),
   }, null, 2);
 
-  console.log(`[itp_refiner] Refining ITP ${itp_id} based on ${rejections.length} rejection(s)`);
+  console.log(`[itp_refiner] Refining ITP ${resolvedItpId} based on ${rejections.length} rejection(s)`);
 
   const response = await getAnthropic().messages.create({
     model: 'claude-sonnet-4-6',
@@ -70,9 +80,9 @@ export async function executeSkill({ user_details_id, itp_id }) {
   } catch (err) {
     console.error('[itp_refiner] Failed to parse Claude response:', err.message, '| raw:', raw);
     // Fall back to just triggering target finder without refinement
-    dispatchSkill('lead_gen_expert', 'target_finder_ten_leads', { user_details_id, itp_id })
+    dispatchSkill('lead_gen_expert', 'target_finder_ten_leads', { user_details_id, itp_id: resolvedItpId })
       .catch(err => console.error('[itp_refiner] target_finder dispatch error:', err));
-    return { refined: false, itp_id };
+    return { refined: false, itp_id: resolvedItpId };
   }
 
   // Update the ITP in the database
@@ -85,7 +95,7 @@ export async function executeSkill({ user_details_id, itp_id }) {
   if (refined.location) updateFields.location = refined.location;
 
   if (Object.keys(updateFields).length > 0) {
-    const { error } = await admin.from('itp').update(updateFields).eq('id', itp_id);
+    const { error } = await admin.from('itp').update(updateFields).eq('id', resolvedItpId);
     if (error) console.error('[itp_refiner] ITP update error:', error);
     else console.log('[itp_refiner] ITP updated successfully');
   }
@@ -96,7 +106,7 @@ export async function executeSkill({ user_details_id, itp_id }) {
     skill_name: 'itp_refiner',
     user_details_id,
     output: {
-      itp_id,
+      itp_id: resolvedItpId,
       rejection_count: rejections.length,
       changes_summary: refined.changes_summary ?? 'ITP updated based on your feedback.',
     },
@@ -104,8 +114,8 @@ export async function executeSkill({ user_details_id, itp_id }) {
 
   // Trigger target finder to find new targets with the refined ITP
   console.log('[itp_refiner] Triggering target_finder_ten_leads with refined ITP');
-  dispatchSkill('lead_gen_expert', 'target_finder_ten_leads', { user_details_id, itp_id })
+  dispatchSkill('lead_gen_expert', 'target_finder_ten_leads', { user_details_id, itp_id: resolvedItpId })
     .catch(err => console.error('[itp_refiner] target_finder dispatch error:', err));
 
-  return { refined: true, itp_id };
+  return { refined: true, itp_id: resolvedItpId };
 }

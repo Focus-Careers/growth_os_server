@@ -46,7 +46,7 @@ export async function sendDirectResponse({ user_details_id, conversationHistory 
   if (error) throw new Error('sendDirectResponse: failed to save message — ' + error.message);
 }
 
-export async function sendAppMessage({ type, employee, skill, user_details_id, sidebar = null, output }) {
+export async function sendAppMessage({ type, employee, skill, user_details_id, sidebar = null, navigate_to = null, output }) {
   await broadcastTyping(user_details_id, true)
 
   const corePrompt = await readFile(join(__dirname, 'core_prompt.md'), 'utf-8');
@@ -71,7 +71,7 @@ export async function sendAppMessage({ type, employee, skill, user_details_id, s
 
   const { error } = await getSupabaseAdmin()
     .from('messages')
-    .insert({ user_details_id, message_body, is_agent: true, sidebar, sidebar_info: sidebar ? output : null });
+    .insert({ user_details_id, message_body, is_agent: true, sidebar, sidebar_info: sidebar ? output : null, navigate_to });
 
   if (error) throw new Error('app_message_sender: failed to save message — ' + error.message);
 }

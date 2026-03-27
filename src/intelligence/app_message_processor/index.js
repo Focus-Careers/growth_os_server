@@ -54,29 +54,29 @@ export async function processMessage(record) {
     .order('created_at', { ascending: true })
     .limit(50);
 
-  // Load context about what's already in progress to prevent re-triggering
+  // Load context about what's already in progress
   const { data: ud } = await getSupabaseAdmin()
-    .from('user_details').select('account_id, queued_mobilisations').eq('id', user_details_id).single();
+    .from('user_details').select('account_id, queued_mobilisations, active_skill').eq('id', user_details_id).single();
 
   let activeContext = '';
+  let approvedCount = 0;
   if (ud?.account_id) {
-    const { count: pendingCount } = await getSupabaseAdmin()
-      .from('leads').select('id', { count: 'exact', head: true })
-      .or('approved.is.null,approved.eq.false')
-      .or('rejected.is.null,rejected.eq.false');
     const { data: campaigns } = await getSupabaseAdmin()
       .from('campaigns').select('id, name, status').eq('account_id', ud.account_id);
 
     // Check if ITP is validated (10+ approved leads)
-    const { count: approvedCount } = await getSupabaseAdmin()
+    const { count: _approvedCount } = await getSupabaseAdmin()
       .from('leads')
       .select('id', { count: 'exact', head: true })
       .eq('approved', true);
 
-    const itpValidated = (approvedCount ?? 0) >= 10;
+    approvedCount = _approvedCount ?? 0;
+    const itpValidated = approvedCount >= 10;
 
     const contextParts = [];
-    if (pendingCount) contextParts.push(`Target finder is already running or has ${pendingCount} leads awaiting approval.`);
+    if (ud.active_skill) {
+      contextParts.push(`A skill is currently running: ${ud.active_skill.employee}/${ud.active_skill.skill}. Do NOT trigger the same skill again while it's running.`);
+    }
     if (ud.queued_mobilisations?.length) contextParts.push(`There are ${ud.queued_mobilisations.length} queued actions waiting to run.`);
     if (campaigns?.length) contextParts.push(`Existing campaigns: ${campaigns.map(c => `${c.name} (${c.status})`).join(', ')}.`);
 
@@ -85,7 +85,7 @@ export async function processMessage(record) {
     } else {
       contextParts.push('The ITP has been validated with 10+ approved leads. Campaign creation is available.');
     }
-    if (contextParts.length) activeContext = `\n\n# Current State\n${contextParts.join('\n')}\nDo NOT suggest skills that are already in progress or recently completed. If targets are already being found or awaiting approval, do not trigger target_finder again.`;
+    if (contextParts.length) activeContext = `\n\n# Current State\n${contextParts.join('\n')}`;
   }
 
   console.log(`[amp] loaded ${history?.length} messages, loading prompts...`);
@@ -152,6 +152,25 @@ export async function processMessage(record) {
 
   if (decision.path === 'trigger_skill') {
     const { employee, skill } = decision;
+
+    // Skills that should always be dispatched directly (no mobilisation)
+    const alwaysDirectDispatch = ['itp_refiner'];
+
+    // Skills that should dispatch directly if the user has done the mobilisation before
+    const directIfReturning = ['target_finder_ten_leads'];
+
+    const shouldDirectDispatch = alwaysDirectDispatch.includes(skill) ||
+      (directIfReturning.includes(skill) && (approvedCount ?? 0) > 0);
+
+    if (shouldDirectDispatch) {
+      console.log(`[amp] trigger_skill → ${employee}/${skill} → direct dispatch`);
+      await sendDirectResponse({ user_details_id, conversationHistory: conversationHistory + `\n\nIMPORTANT: The user wants you to run ${skill}. Briefly confirm you're on it and will update them when done. One sentence. No greeting.` });
+      const { dispatchSkill } = await import('../../employees/index.js');
+      dispatchSkill(employee, skill, { user_details_id })
+        .catch(err => console.error(`[amp] direct dispatch error (${employee}/${skill}):`, err));
+      return;
+    }
+
     // Map skill names to their mobilisation names
     const skillToMobilisation = {
       'target_finder_ten_leads': 'initiate_target_finder_ten_leads',

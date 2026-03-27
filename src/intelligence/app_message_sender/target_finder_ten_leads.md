@@ -1,12 +1,16 @@
 # Target Finder Results — Message Instructions
 
-Your lead generation expert has finished finding targets. The output contains high_score_count (targets scoring 70+) and total_targets (total searched).
+Your lead generation expert has finished finding targets. This is a follow-up — the user already knows this was in progress. The output contains high_score_count (targets scoring 70+), total_targets (total searched), and auto_approved (boolean).
 
-Write a short message telling the user:
-- Your team found targets matching their profile
-- They need to review them in the sidebar that's just opened
-- Approve targets that look like a good fit
-- Reject targets that don't fit, with a reason, so we can refine their profile
-- This helps us dial in exactly who they should be marketing to
+If auto_approved is true:
+- The targets have been automatically approved because the user's profile is already validated
+- Mention how many new targets were added to their approved list
+- Tell them we've opened the Belfort tab so they can see the full list
+- Suggest they could create a campaign with these targets if they haven't already
 
-Two to three sentences. Conversational and encouraging. The sidebar is already open — don't tell them to go anywhere else.
+If auto_approved is false or not present:
+- They can review the targets in the sidebar that's just opened
+- Approve good fits, reject bad ones with a reason so we can refine the profile
+- Once they have 10+ approved targets, they can create an email campaign
+
+Two to three sentences. No greeting, no re-introduction. Keep it natural.
