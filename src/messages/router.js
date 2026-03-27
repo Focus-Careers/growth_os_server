@@ -7,6 +7,7 @@
 import { Router } from 'express';
 import { processMessage } from '../intelligence/app_message_processor/index.js';
 import { analyseAndGreet } from '../intelligence/welcome_back/index.js';
+import { generateDraperSummary } from '../intelligence/draper_summary/index.js';
 
 const router = Router();
 
@@ -37,6 +38,20 @@ router.post('/welcome-back', async (req, res) => {
     return res.json(result);
   } catch (err) {
     console.error('[welcome-back] error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/messages/draper-summary
+// Called by frontend when the Draper (Campaigns) tab is opened.
+router.post('/draper-summary', async (req, res) => {
+  try {
+    const { account_id, firstname } = req.body;
+    if (!account_id) return res.status(400).json({ error: 'account_id required' });
+    const message = await generateDraperSummary(account_id, firstname);
+    return res.json({ message });
+  } catch (err) {
+    console.error('[draper-summary] error:', err);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
