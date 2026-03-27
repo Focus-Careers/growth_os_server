@@ -152,6 +152,20 @@ export async function processMessage(record) {
 
   if (decision.path === 'trigger_skill') {
     const { employee, skill } = decision;
+
+    // Skills that should be dispatched directly (no mobilisation flow needed)
+    const directDispatchSkills = ['itp_refiner'];
+
+    if (directDispatchSkills.includes(skill)) {
+      console.log(`[amp] trigger_skill → ${employee}/${skill} → direct dispatch`);
+      // Send a Watson message first, then dispatch
+      await sendDirectResponse({ user_details_id, conversationHistory: conversationHistory + '\n\nIMPORTANT: The user wants to refine their target profile. Briefly confirm you\'re on it and will update them when done. One sentence.' });
+      const { dispatchSkill } = await import('../../employees/index.js');
+      dispatchSkill(employee, skill, { user_details_id })
+        .catch(err => console.error(`[amp] direct dispatch error (${employee}/${skill}):`, err));
+      return;
+    }
+
     // Map skill names to their mobilisation names
     const skillToMobilisation = {
       'target_finder_ten_leads': 'initiate_target_finder_ten_leads',

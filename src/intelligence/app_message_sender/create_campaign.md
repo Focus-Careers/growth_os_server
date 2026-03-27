@@ -7,6 +7,7 @@ The output contains: campaign_name, subject_line, email_template, num_emails, to
 Write a short message covering:
 - The campaign is ready with X contacts loaded
 - Mention the subject line
-- They can review the full sequence in the sidebar
+- They can review and edit the full email sequence in the sidebar
+- Once they approve it, they'll set up a sender and launch
 
 Two to three sentences. No greeting, no re-introduction. No bullet points or formatting.

@@ -7,6 +7,6 @@ The output contains: rejection_count and changes_summary.
 Write a short message covering:
 - The profile has been updated based on their feedback
 - What changed (use the changes_summary)
-- Belfort is now finding new targets with the refined profile
+- New targets are already being found with the refined profile — they'll be notified when ready
 
 Two to three sentences. No greeting, no re-introduction. No bullet points.

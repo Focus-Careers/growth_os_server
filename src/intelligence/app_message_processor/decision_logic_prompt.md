@@ -15,10 +15,12 @@ Requirement: You must specify which employee and skill would benefit the user. U
 
 # Important Rules
 - If the user mentions "campaign", "email", "outreach", "send emails" → trigger create_campaign
-- If the user mentions "find targets", "find companies", "lead generation", "search" → trigger target_finder_ten_leads
+- If the user mentions "find targets", "find companies", "lead generation", "search", "find more", "more targets", "keep searching" → trigger target_finder_ten_leads
 - If the user mentions "analyse website", "look at this website" → trigger analyse_website
-- If the user mentions "target profile", "ITP", "ideal customer" → trigger define_itp
+- If the user mentions "target profile", "ITP", "ideal customer", "define targets" → trigger define_itp
+- If the user mentions "refine", "improve targeting", "targets aren't right", "wrong targets", "update profile", "update ITP", "bad leads", "leads aren't good" → trigger itp_refiner
 - A user CAN create multiple campaigns. Do not assume they are referring to an existing one.
+- A user CAN request more targets even if targets were recently found. Each request is independent.
 - When in doubt between direct_response and trigger_skill, prefer trigger_skill.
 
 # Available Skills
