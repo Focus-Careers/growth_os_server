@@ -5,12 +5,12 @@ import { getSupabaseAdmin } from '../../config/supabase.js';
  * @param {string} user_details_id
  * @param {{ employee: string, skill: string, status: 'running' | 'complete', message?: string }} payload
  */
-export async function broadcastSkillStatus(user_details_id, { employee, skill, status, message }) {
+export async function broadcastSkillStatus(user_details_id, { employee, skill, status, message, sidebar_message }) {
   try {
-    await getSupabaseAdmin().channel(`user:${user_details_id}`).send({
+    await getSupabaseAdmin().channel(`skill_status:${user_details_id}`).send({
       type: 'broadcast',
       event: 'skill_status',
-      payload: { employee, skill, status, message },
+      payload: { employee, skill, status, message, sidebar_message },
     });
     console.log(`[skill_status] ${status}: ${employee}/${skill} for ${user_details_id}`);
   } catch (err) {

@@ -19,7 +19,8 @@ import { executeSkill as emailCampaignManager_syncToSmartlead } from './email_ca
 import { broadcastSkillStatus } from '../intelligence/skill_status_broadcaster/index.js';
 
 // Skill-specific status messages shown to the user while running
-const skillStatusMessages = {
+// Shown in the chat feed (includes employee name)
+const skillChatMessages = {
   'lead_gen_expert/target_finder_ten_leads': 'Belfort is searching the web for target companies...',
   'lead_gen_expert/target_finder_100_leads': 'Belfort is expanding the target search...',
   'lead_gen_expert/contact_finder': 'Belfort is finding contact details...',
@@ -31,6 +32,21 @@ const skillStatusMessages = {
   'email_campaign_manager/create_new_sender': 'Draper is setting up your sender identity...',
   'email_campaign_manager/launch_campaign': 'Draper is launching your campaign...',
   'email_campaign_manager/sync_to_smartlead': 'Draper is syncing your campaign to Smartlead...',
+};
+
+// Shown in the employee sidebar (no name, short)
+const skillSidebarMessages = {
+  'lead_gen_expert/target_finder_ten_leads': 'Searching for targets...',
+  'lead_gen_expert/target_finder_100_leads': 'Expanding target search...',
+  'lead_gen_expert/contact_finder': 'Finding contacts...',
+  'lead_gen_expert/enrich_target': 'Enriching target data...',
+  'lead_gen_expert/itp_refiner': 'Refining target profile...',
+  'lead_gen_expert/analyse_website': 'Analysing website...',
+  'business_analyst/define_itp': 'Building target profile...',
+  'email_campaign_manager/create_campaign': 'Drafting campaign...',
+  'email_campaign_manager/create_new_sender': 'Setting up sender...',
+  'email_campaign_manager/launch_campaign': 'Launching campaign...',
+  'email_campaign_manager/sync_to_smartlead': 'Syncing to Smartlead...',
 };
 
 const skills = {
@@ -61,14 +77,16 @@ export async function dispatchSkill(employee, skill, inputs) {
   if (!fn) throw new Error(`Unknown skill: ${employee}/${skill}`);
 
   const key = `${employee}/${skill}`;
-  const statusMessage = skillStatusMessages[key] ?? `Processing ${skill}...`;
+  const chatMessage = skillChatMessages[key] ?? `Processing ${skill}...`;
+  const sidebarMessage = skillSidebarMessages[key] ?? `Working...`;
 
   if (inputs.user_details_id) {
     await broadcastSkillStatus(inputs.user_details_id, {
       employee,
       skill,
       status: 'running',
-      message: statusMessage,
+      message: chatMessage,
+      sidebar_message: sidebarMessage,
     });
   }
 
