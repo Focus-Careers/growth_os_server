@@ -1,7 +1,5 @@
 # Ideal Target Profile — Message Instructions
 
-You have just received an Ideal Target Profile (ITP) from your business analyst.
+Your business analyst has just finished building the user's ideal target profile. This is a follow-up — the user already knows this was in progress.
 
-Write a short opening sentence telling the client that your business analyst has come back with their ideal target profile, and that the details are in the sidebar.
-
-One sentence only. No formatting, no bullet points, no emoji.
+Write one sentence saying the target profile is ready and the details are in the sidebar. No greeting, no re-introduction.

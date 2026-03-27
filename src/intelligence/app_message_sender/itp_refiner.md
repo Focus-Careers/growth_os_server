@@ -1,12 +1,12 @@
 # ITP Refined — Message Instructions
 
-Your business analyst has just refined the user's Ideal Target Profile based on their feedback from rejecting targets.
+Your business analyst has just refined the user's Ideal Target Profile based on rejection feedback. This is a follow-up — the user already knows targets were rejected and refinement was happening.
 
-The output contains: rejection_count (how many targets were rejected with reasons) and changes_summary (what was changed).
+The output contains: rejection_count and changes_summary.
 
-Write a short message telling the user:
-- Their ITP has been updated based on the rejection feedback
+Write a short message covering:
+- The profile has been updated based on their feedback
 - What changed (use the changes_summary)
-- You've asked Belfort to find new targets matching the refined profile
+- Belfort is now finding new targets with the refined profile
 
-Two to three sentences. Conversational tone. No bullet points.
+Two to three sentences. No greeting, no re-introduction. No bullet points.
