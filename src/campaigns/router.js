@@ -80,7 +80,7 @@ router.post('/toggle-status', async (req, res) => {
 
     // Sync to Smartlead
     if (campaign?.smartlead_campaign_id && campaign.smartlead_campaign_id !== 'syncing') {
-      const slStatus = status === 'active' ? 'ACTIVE' : 'PAUSED';
+      const slStatus = status === 'active' ? 'START' : 'PAUSED';
       await updateCampaignStatus(parseInt(campaign.smartlead_campaign_id), slStatus);
       console.log(`[toggle-status] Campaign ${campaign_id} → ${status} (Smartlead: ${slStatus})`);
     }
