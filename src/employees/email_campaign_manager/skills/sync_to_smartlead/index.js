@@ -74,11 +74,7 @@ export async function executeSkill({ user_details_id, campaign_id }) {
   // ── Step 4b: Register webhook ──────────────────────────────────────
   const webhookBaseUrl = process.env.WEBHOOK_BASE_URL;
   if (webhookBaseUrl) {
-    await registerCampaignWebhook(
-      slCampaignId,
-      `${webhookBaseUrl}/api/webhooks/smartlead`,
-      ['LEAD_REPLIED', 'LEAD_OPENED', 'LEAD_CLICKED', 'LEAD_BOUNCED', 'LEAD_UNSUBSCRIBED']
-    );
+    await registerCampaignWebhook(slCampaignId, `${webhookBaseUrl}/api/webhooks/smartlead`);
   } else {
     console.warn('[sync_to_smartlead] WEBHOOK_BASE_URL not set, skipping webhook registration');
   }

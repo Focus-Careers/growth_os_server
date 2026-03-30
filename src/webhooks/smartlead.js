@@ -5,19 +5,25 @@ import { sendAppMessage } from '../intelligence/app_message_sender/index.js';
 
 const router = Router();
 
+// Smartlead uses inconsistent event names across API versions — handle all variants
 const EVENT_TO_STATUS = {
   'EMAIL_SENT': 'sent',
+  'FIRST_EMAIL_SENT': 'sent',
+  'EMAIL_OPEN': 'opened',
   'EMAIL_OPENED': 'opened',
+  'EMAIL_REPLY': 'replied',
   'EMAIL_REPLIED': 'replied',
+  'REPLY_RECEIVED': 'replied',
+  'EMAIL_BOUNCE': 'bounced',
   'EMAIL_BOUNCED': 'bounced',
   'EMAIL_UNSUBSCRIBED': 'unsubscribed',
-  // Smartlead per-campaign webhooks use LEAD_ prefix
   'LEAD_SENT': 'sent',
   'LEAD_OPENED': 'opened',
   'LEAD_REPLIED': 'replied',
   'LEAD_BOUNCED': 'bounced',
   'LEAD_UNSUBSCRIBED': 'unsubscribed',
-  'LEAD_CLICKED': 'opened',
+  'EMAIL_LINK_CLICK': 'opened',
+  'EMAIL_CLICKED': 'opened',
 };
 
 /**
@@ -64,8 +70,12 @@ router.post('/', async (req, res) => {
   try {
     const payload = req.body;
     const event = payload.event_type ?? payload.event ?? payload.type;
-    const leadEmail = payload.lead?.email;
+    const leadEmail = payload.lead?.email ?? payload.lead_email;
     const slCampaignId = String(payload.campaign_id);
+    // Reply body can come in multiple formats
+    const replyBody = payload.reply?.body ?? replyBody ?? payload.message ?? null;
+    // Category can come in multiple formats
+    const category = payload.new_category ?? payload.reply_category ?? payload.category ?? null;
 
     if (!leadEmail || !slCampaignId) {
       console.log(`[smartlead-webhook] Missing lead email or campaign_id`);
@@ -101,7 +111,6 @@ router.post('/', async (req, res) => {
 
     // Handle LEAD_CATEGORY_UPDATED separately (no status change)
     if (event === 'LEAD_CATEGORY_UPDATED') {
-      const category = payload.category ?? payload.lead_category ?? null;
       if (category) {
         await getSupabaseAdmin()
           .from('campaign_contacts')
@@ -126,7 +135,7 @@ router.post('/', async (req, res) => {
     if (newStatus === 'opened') updateFields.opened_at = payload.timestamp ?? new Date().toISOString();
     if (newStatus === 'replied') {
       updateFields.replied_at = payload.timestamp ?? new Date().toISOString();
-      if (payload.reply_body) updateFields.reply_body = payload.reply_body;
+      if (replyBody) updateFields.reply_body = replyBody;
     }
 
     // Update DB
@@ -145,8 +154,8 @@ router.post('/', async (req, res) => {
 
     // Classify replies
     let classification = null;
-    if (newStatus === 'replied' && payload.reply_body) {
-      classification = await classifyReply(payload.reply_body);
+    if (newStatus === 'replied' && replyBody) {
+      classification = await classifyReply(replyBody);
       await getSupabaseAdmin()
         .from('campaign_contacts')
         .update({ classification })
@@ -164,7 +173,7 @@ router.post('/', async (req, res) => {
         campaign_id: campaign.id,
         contact_id: contact.id,
         status: newStatus,
-        reply_body: payload.reply_body ?? null,
+        reply_body: replyBody ?? null,
         classification,
         lead_email: leadEmail,
         lead_name: leadName,
@@ -183,7 +192,7 @@ router.post('/', async (req, res) => {
             lead_email: leadEmail,
             company: payload.lead?.company_name ?? '',
             campaign_name: campaign.name,
-            reply_body: payload.reply_body,
+            reply_body: replyBody,
             classification,
           },
         });

@@ -148,7 +148,7 @@ export async function attachEmailAccount(campaignId, emailAccountId) {
   console.log(`[smartlead] Attaching email account ${emailAccountId} to campaign ${campaignId}`);
   const { ok, data } = await smartleadFetch(`/campaigns/${campaignId}/email-accounts`, {
     method: 'POST',
-    body: JSON.stringify({ email_account_id: emailAccountId }),
+    body: JSON.stringify({ email_account_ids: [emailAccountId] }),
   });
   return ok ? data : null;
 }
@@ -201,17 +201,27 @@ export async function getCampaignStatistics(campaignId) {
 
 /**
  * Register a webhook URL for a specific campaign.
- * Per-campaign webhook — must be called for each campaign.
+ * Uses the working endpoint from maid-server: POST /webhook/create
  */
-export async function registerCampaignWebhook(campaignId, webhookUrl, eventTypes) {
+export async function registerCampaignWebhook(campaignId, webhookUrl) {
   console.log(`[smartlead] Registering webhook for campaign ${campaignId}: ${webhookUrl}`);
-  const { ok, data } = await smartleadFetch(`/campaigns/${campaignId}/webhooks`, {
+  const { ok, data } = await smartleadFetch('/webhook/create', {
     method: 'POST',
     body: JSON.stringify({
-      id: null,
-      name: 'GrowthOS Webhook',
+      name: `growthOS-webhook-${campaignId}`,
       webhook_url: webhookUrl,
-      event_types: eventTypes,
+      email_campaign_id: campaignId,
+      association_type: 3,
+      event_type_map: {
+        EMAIL_SENT: true,
+        FIRST_EMAIL_SENT: true,
+        EMAIL_OPEN: true,
+        EMAIL_LINK_CLICK: true,
+        EMAIL_REPLY: true,
+        LEAD_UNSUBSCRIBED: true,
+        LEAD_CATEGORY_UPDATED: true,
+        EMAIL_BOUNCE: true,
+      },
     }),
   });
   if (!ok) {
