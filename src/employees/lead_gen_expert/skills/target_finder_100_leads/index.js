@@ -106,30 +106,32 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
       break;
     }
 
-    // Build previous targets string for the search prompt
+    // Build previous targets and queries for the search prompt
     let previousTargetsText = 'None yet.';
+    let previousQueriesText = 'None yet.';
+
+    const { data: allPreviousQueries } = await getSupabaseAdmin()
+      .from('target_finder_google_search_prompts')
+      .select('query')
+      .eq('itp', itp.id)
+      .order('created_at', { ascending: true });
+
+    if (allPreviousQueries && allPreviousQueries.length > 0) {
+      previousQueriesText = allPreviousQueries.map((q, i) => `${i + 1}. ${q.query}`).join('\n');
+    }
+
     if (currentLeads && currentLeads.length > 0) {
-      // Collect unique search prompt IDs to fetch query text
-      const promptIds = [...new Set(
-        currentLeads.flatMap(l => (l.search_query_ids ?? []).map(p => p.id)).filter(Boolean)
-      )];
-      const { data: searchPrompts } = await getSupabaseAdmin()
-        .from('target_finder_google_search_prompts')
-        .select('id, query')
-        .in('id', promptIds);
-
-      const queryById = new Map((searchPrompts ?? []).map(p => [p.id, p.query]));
-
       previousTargetsText = currentLeads.map(l => {
-        const firstPromptId = l.search_query_ids?.[0]?.id;
-        const query = firstPromptId ? (queryById.get(firstPromptId) ?? 'unknown') : 'unknown';
         const target = l.targets;
-        return `- Title: ${target?.title ?? 'N/A'} | Website: ${target?.link ?? 'N/A'} | Query: "${query}" | Score: ${l.score ?? 'N/A'} | Reason: ${l.score_reason ?? 'N/A'}`;
+        return `- Title: ${target?.title ?? 'N/A'} | Website: ${target?.link ?? 'N/A'} | Score: ${l.score ?? 'N/A'} | Reason: ${l.score_reason ?? 'N/A'}`;
       }).join('\n');
     }
 
     // Generate search query
-    const searchPrompt = fillTemplate(searchPromptTemplate, { '{{previous_targets}}': previousTargetsText });
+    const searchPrompt = fillTemplate(searchPromptTemplate, {
+      '{{previous_targets}}': previousTargetsText,
+      '{{previous_queries}}': previousQueriesText,
+    });
     const searchResponse = await callClaude({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 256,
@@ -157,7 +159,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
       },
       body: JSON.stringify({
         q: query,
-        num: 10,
+        num: 20,
         ...(itp.location ? { location: itp.location } : {}),
         hl: 'en',
       }),
