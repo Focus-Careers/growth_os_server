@@ -103,7 +103,7 @@ export async function analyseAndGreet(user_details_id) {
     system: prompt,
     messages: [{
       role: 'user',
-      content: `User's first name: ${firstName}\nState: ${state}\nContext: ${context}`,
+      content: `User's first name: ${firstName}\nState: ${state}\nContext: ${context}\nExperience: ${messages.length > 20 ? 'experienced user (many messages)' : 'newer user (still getting started)'}`,
     }],
   });
 

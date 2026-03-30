@@ -5,7 +5,7 @@ steps:
   - id: "notify"
     type: "option_set"
     messages:
-      - "Good news: Belfort has just found the 100th approved lead."
+      - "Good news — you've now got 100 approved leads across your target list."
       - "You've got a solid base of targets now. Want to set up an email campaign to start reaching out to them?"
     options:
       - id: 1
