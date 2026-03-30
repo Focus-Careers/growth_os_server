@@ -109,7 +109,11 @@ export async function analyseAndGreet(user_details_id) {
 
   const greeting = response.content[0].text.trim();
 
-  // 6. Save greeting to messages table
+  // 6. Save session divider + greeting to messages table
+  const dividerText = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  await supabase
+    .from('messages')
+    .insert({ user_details_id, message_body: dividerText, is_agent: true, is_divider: true });
   await supabase
     .from('messages')
     .insert({ user_details_id, message_body: greeting, is_agent: true });

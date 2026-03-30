@@ -35,7 +35,7 @@ export async function mapItpToSicCodes(itp) {
     messages: [{ role: 'user', content: context }],
   });
 
-  const text = response.content[0].text.trim();
+  const text = response.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
   let sicCodes;
   try {
     sicCodes = JSON.parse(text);
