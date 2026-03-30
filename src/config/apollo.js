@@ -33,6 +33,37 @@ export async function enrichCompany(domain) {
 }
 
 /**
+ * Search for companies by name and/or location.
+ * Endpoint: POST /v1/mixed_companies/search
+ */
+export async function searchCompaniesByName(companyName, locations = ['United Kingdom']) {
+  console.log(`[apollo] Company search: "${companyName}" in ${locations.join(', ')}`);
+  try {
+    const res = await fetch(`${APOLLO_BASE_URL}/mixed_companies/search`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({
+        q_organization_name: companyName,
+        organization_locations: locations,
+        per_page: 5,
+        page: 1,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      console.error('[apollo] Company search error:', JSON.stringify(data));
+      return [];
+    }
+    const orgs = data.organizations ?? [];
+    console.log(`[apollo] Company search returned ${orgs.length} results`);
+    return orgs;
+  } catch (err) {
+    console.error(`[apollo] Company search error for "${companyName}":`, err.message);
+    return [];
+  }
+}
+
+/**
  * Reveal a person's email using name + domain.
  * Endpoint: POST /v1/people/match
  */
