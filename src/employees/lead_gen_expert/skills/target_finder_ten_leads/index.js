@@ -174,9 +174,19 @@ export async function executeSkill({ user_details_id, itp_id }) {
         }
       }
 
+      let chLeadsCreated = 0;
       for (const { chCompany, score, reason } of allScored) {
+        // Stop once we've hit the target — don't create more leads than needed
+        if (initialHighScoreCount + chLeadsCreated >= dynamicTarget) {
+          console.log(`[target_finder] CH phase: reached ${dynamicTarget} leads, stopping early`);
+          break;
+        }
+
         const item = { score, reason };
         if (!chCompany) continue;
+
+        // Skip low-score companies (don't even create the target)
+        if ((item.score ?? 0) < HIGH_SCORE_THRESHOLD) continue;
 
         console.log(`[target_finder] CH scored: ${chCompany.companyName} → ${item.score} (${item.reason})`);
 
@@ -207,37 +217,36 @@ export async function executeSkill({ user_details_id, itp_id }) {
         if (chCompany.domain) dedupSets.existingDomains.add(chCompany.domain);
         dedupSets.existingCHNumbers.add(chCompany.companyNumber);
 
-        // Create lead if above threshold
-        if ((item.score ?? 0) >= HIGH_SCORE_THRESHOLD) {
-          await admin.from('leads').insert({
+        // Create lead
+        await admin.from('leads').insert({
+          target_id: targetId,
+          itp_id: itp.id,
+          score: item.score,
+          score_reason: item.reason ?? null,
+        });
+        chLeadsCreated++;
+
+        // Save officers as contacts BEFORE enrichment
+        for (const officer of chCompany.officers) {
+          if (!officer.first_name && !officer.last_name) continue;
+          await admin.from('contacts').insert({
             target_id: targetId,
-            itp_id: itp.id,
-            score: item.score,
-            score_reason: item.reason ?? null,
+            account_id: userDetails.account_id,
+            first_name: officer.first_name,
+            last_name: officer.last_name,
+            role: officer.role,
+            email: null,
+            source: 'companies_house',
           });
+        }
 
-          // Save officers as contacts BEFORE enrichment
-          for (const officer of chCompany.officers) {
-            if (!officer.first_name && !officer.last_name) continue;
-            await admin.from('contacts').insert({
-              target_id: targetId,
-              account_id: userDetails.account_id,
-              first_name: officer.first_name,
-              last_name: officer.last_name,
-              role: officer.role,
-              email: null,
-              source: 'companies_house',
-            });
-          }
-
-          // Run enrichment (scrape + Apollo reveal for officers' emails)
-          if (chCompany.domain) {
-            try {
-              await runEnrichTarget({ target_id: targetId, user_details_id, silent: true });
-              await new Promise(r => setTimeout(r, 1000));
-            } catch (err) {
-              console.error(`[target_finder] CH enrich error for ${chCompany.companyName}:`, err.message);
-            }
+        // Run enrichment (scrape + Apollo reveal for officers' emails)
+        if (chCompany.domain) {
+          try {
+            await runEnrichTarget({ target_id: targetId, user_details_id, silent: true });
+            await new Promise(r => setTimeout(r, 1000));
+          } catch (err) {
+            console.error(`[target_finder] CH enrich error for ${chCompany.companyName}:`, err.message);
           }
         }
       }

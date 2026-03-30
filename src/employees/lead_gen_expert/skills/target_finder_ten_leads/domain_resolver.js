@@ -16,11 +16,18 @@ const BLOCKED_DOMAINS = new Set([
   'credencedata.com', 'tracxn.com', 'thegazette.co.uk', 'businessnetwork.co.uk',
   'bookabuilderuk.com', 'hamuch.com', 'northdata.com', 'zoominfo.com',
   'mybuilder.com', 'beta.companieshouse.gov.uk', 'ceginformacio.hu',
+  // Round 2 blocklist additions
+  'graphlytic.com', 'companieshousedata.co.uk', 'planningsignal.co.uk',
+  'firstreport.co.uk', 'solocheck.ie', 'opengovuk.com', 'lei-ireland.ie',
+  'bizdb.co.uk', 'businessmad.com', 'checkfree.co.uk', 'britishlei.co.uk',
+  'pappers.co.uk', 'bringo.co.uk', 'gladiatorbusiness.co.uk', 'tinytax.co.uk',
+  'theconstructionindex.co.uk', 'tradesmanregistry.co.uk',
 ]);
 
 // Suffix matches — blocks any subdomain (e.g. open.endole.co.uk, gb.kompass.com)
 const BLOCKED_SUFFIXES = [
   'endole.co.uk', 'kompass.com', 'linkedin.com', 'companieshouse.gov.uk',
+  'lursoft.lv', 'facebook.com', 'youcontrol.com.ua',
 ];
 
 export function isDomainBlocked(domain) {
