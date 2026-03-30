@@ -1,8 +1,9 @@
 import { searchCompaniesByName } from '../../../../config/apollo.js';
 
+// Exact domain matches
 const BLOCKED_DOMAINS = new Set([
   'yell.com', 'checkatrade.com', 'linkedin.com', 'companieshouse.gov.uk',
-  'facebook.com', 'twitter.com', 'instagram.com', 'endole.co.uk', 'dnb.com',
+  'facebook.com', 'twitter.com', 'instagram.com', 'dnb.com',
   'glassdoor.com', 'trustatrader.com', 'bark.com', 'houzz.com', 'cylex-uk.co.uk',
   'scoot.co.uk', 'thomsonlocal.com', '192.com', 'companycheck.co.uk',
   'google.com', 'youtube.com', 'yelp.com', 'trustpilot.com', 'freeindex.co.uk',
@@ -11,7 +12,21 @@ const BLOCKED_DOMAINS = new Set([
   'telegraph.co.uk', 'independent.co.uk', 'mirror.co.uk', 'indeed.com',
   'reed.co.uk', 'totaljobs.com', 'gumtree.com', 'rightmove.co.uk',
   'zoopla.co.uk', 'companies-house.gov.uk', 'find-and-update.company-information.service.gov.uk',
+  // Company data aggregators / directories (caught in testing)
+  'credencedata.com', 'tracxn.com', 'thegazette.co.uk', 'businessnetwork.co.uk',
+  'bookabuilderuk.com', 'hamuch.com', 'northdata.com', 'zoominfo.com',
+  'mybuilder.com', 'beta.companieshouse.gov.uk', 'ceginformacio.hu',
 ]);
+
+// Suffix matches — blocks any subdomain (e.g. open.endole.co.uk, gb.kompass.com)
+const BLOCKED_SUFFIXES = [
+  'endole.co.uk', 'kompass.com', 'linkedin.com', 'companieshouse.gov.uk',
+];
+
+export function isDomainBlocked(domain) {
+  if (BLOCKED_DOMAINS.has(domain)) return true;
+  return BLOCKED_SUFFIXES.some(suffix => domain === suffix || domain.endsWith('.' + suffix));
+}
 
 /**
  * Extract root domain from a URL.
@@ -59,7 +74,7 @@ async function resolveViaSerper(companyName, location) {
 
     for (const result of results) {
       const domain = extractDomain(result.link);
-      if (domain && !BLOCKED_DOMAINS.has(domain)) {
+      if (domain && !isDomainBlocked(domain)) {
         console.log(`[domain_resolver] Serper resolved "${companyName}" → ${domain}`);
         return domain;
       }

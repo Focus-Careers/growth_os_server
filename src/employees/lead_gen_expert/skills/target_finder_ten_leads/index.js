@@ -6,6 +6,7 @@ import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { executeSkill as runEnrichTarget } from '../enrich_target/index.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 import { searchCompaniesHouseForItp } from './companies_house_search.js';
+import { isDomainBlocked } from './domain_resolver.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HIGH_SCORE_THRESHOLD = 70;
@@ -131,36 +132,50 @@ export async function executeSkill({ user_details_id, itp_id }) {
     });
 
     if (chResults.length > 0) {
-      // Score CH results with structured prompt
-      const structuredList = chResults.map((c, i) =>
-        `[${i}] Company: "${c.companyName}" (${c.domain ?? 'no website'})\n` +
-        `    Industry (SIC): ${c.sicDescription}\n` +
-        `    Location: ${c.location ?? 'Unknown'}\n` +
-        `    Founded: ${c.dateOfCreation ?? 'Unknown'}\n` +
-        `    Officers: ${c.officers.map(o => `${o.first_name ?? ''} ${o.last_name ?? ''} (${o.role ?? 'unknown role'})`).join(', ') || 'None listed'}\n` +
-        `    Company Number: ${c.companyNumber}`
-      ).join('\n\n');
+      // Score CH results in batches of 20 to avoid token limit truncation
+      const CH_BATCH_SIZE = 20;
+      const allScored = []; // { chCompany, score, reason }
 
-      const scorePrompt = fillTemplate(structuredScoreTemplate, {
-        '{{structured_companies}}': structuredList,
-      });
+      for (let batchStart = 0; batchStart < chResults.length; batchStart += CH_BATCH_SIZE) {
+        const batch = chResults.slice(batchStart, batchStart + CH_BATCH_SIZE);
+        console.log(`[target_finder] Scoring CH batch ${Math.floor(batchStart / CH_BATCH_SIZE) + 1}: companies ${batchStart + 1}-${batchStart + batch.length} of ${chResults.length}`);
 
-      const scoreResponse = await callClaude({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 2048,
-        messages: [{ role: 'user', content: scorePrompt }],
-      });
+        const structuredList = batch.map((c, i) =>
+          `[${i}] Company: "${c.companyName}" (${c.domain ?? 'no website'})\n` +
+          `    Industry (SIC): ${c.sicDescription}\n` +
+          `    Location: ${c.location ?? 'Unknown'}\n` +
+          `    Founded: ${c.dateOfCreation ?? 'Unknown'}\n` +
+          `    Officers: ${c.officers.map(o => `${o.first_name ?? ''} ${o.last_name ?? ''} (${o.role ?? 'unknown role'})`).join(', ') || 'None listed'}\n` +
+          `    Company Number: ${c.companyNumber}`
+        ).join('\n\n');
 
-      let scores = [];
-      try {
-        const raw = scoreResponse.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-        scores = JSON.parse(raw);
-      } catch (e) {
-        console.error('[target_finder] Failed to parse CH scores:', scoreResponse.content[0].text);
+        const scorePrompt = fillTemplate(structuredScoreTemplate, {
+          '{{structured_companies}}': structuredList,
+        });
+
+        const scoreResponse = await callClaude({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 4096,
+          messages: [{ role: 'user', content: scorePrompt }],
+        });
+
+        let scores = [];
+        try {
+          const raw = scoreResponse.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+          scores = JSON.parse(raw);
+        } catch (e) {
+          console.error(`[target_finder] Failed to parse CH batch scores:`, scoreResponse.content[0].text.slice(0, 200));
+          continue;
+        }
+
+        for (const item of scores) {
+          const chCompany = batch[item.index];
+          if (chCompany) allScored.push({ chCompany, score: item.score, reason: item.reason });
+        }
       }
 
-      for (const item of scores) {
-        const chCompany = chResults[item.index];
+      for (const { chCompany, score, reason } of allScored) {
+        const item = { score, reason };
         if (!chCompany) continue;
 
         console.log(`[target_finder] CH scored: ${chCompany.companyName} → ${item.score} (${item.reason})`);
@@ -333,6 +348,7 @@ export async function executeSkill({ user_details_id, itp_id }) {
       try { domain = new URL(result.link).hostname.replace(/^www\./, ''); } catch { continue; }
 
       if (dedupSets.customerDomains.has(result.link.toLowerCase())) continue;
+      if (isDomainBlocked(domain)) continue;
       if (dedupSets.existingDomains.has(domain)) {
         // Check if lead already exists
         const { data: existingTarget } = await admin
