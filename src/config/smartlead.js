@@ -137,7 +137,7 @@ export async function createEmailAccount({ from_name, from_email, smtp_host, smt
     }),
   });
   if (!ok) return null;
-  console.log(`[smartlead] Email account created: id=${data.id}`);
+  console.log(`[smartlead] Email account created:`, JSON.stringify(data));
   return data;
 }
 
@@ -150,6 +150,7 @@ export async function attachEmailAccount(campaignId, emailAccountId) {
     method: 'POST',
     body: JSON.stringify({ email_account_ids: [emailAccountId] }),
   });
+  console.log(`[smartlead] Attach response:`, JSON.stringify(data));
   return ok ? data : null;
 }
 
@@ -173,7 +174,7 @@ export async function addLeads(campaignId, leads) {
     }),
   });
   if (ok) {
-    console.log(`[smartlead] Leads added: ${data.added_count ?? 0} added, ${data.skipped_count ?? 0} skipped`);
+    console.log(`[smartlead] Leads response:`, JSON.stringify(data));
   }
   return ok ? data : null;
 }
@@ -228,6 +229,6 @@ export async function registerCampaignWebhook(campaignId, webhookUrl) {
     console.error(`[smartlead] Failed to register webhook for campaign ${campaignId}`);
     return null;
   }
-  console.log(`[smartlead] Webhook registered: id=${data?.id}`);
+  console.log(`[smartlead] Webhook registered:`, JSON.stringify(data));
   return data;
 }
