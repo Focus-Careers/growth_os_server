@@ -12,8 +12,30 @@ async function loadPrompt() {
 
 async function fetchWebsiteText(url) {
   const normalised = url.startsWith('http') ? url : `https://${url}`;
-  const res = await fetch(normalised, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  console.log(`[analyse_website] Fetching ${normalised}`);
+  const res = await fetch(normalised, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-GB,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Cache-Control': 'no-cache',
+    },
+  });
+  console.log(`[analyse_website] HTTP ${res.status} for ${normalised}`);
   const html = await res.text();
+
+  // Detect Cloudflare challenge
+  const isCloudflare = html.includes('cf-browser-verification')
+    || html.includes('challenge-platform')
+    || html.includes('cf_chl_opt')
+    || (html.includes('Just a moment') && html.includes('cloudflare'));
+
+  if (isCloudflare) {
+    console.log(`[analyse_website] BLOCKED by Cloudflare challenge for ${normalised}`);
+    return '[Website content could not be retrieved — blocked by Cloudflare security challenge]';
+  }
+
   // Strip tags to get readable text for the model
   return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 20000);
 }
