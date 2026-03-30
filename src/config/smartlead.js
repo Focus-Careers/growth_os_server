@@ -186,7 +186,7 @@ export async function addLeads(campaignId, leads) {
 export async function updateCampaignStatus(campaignId, status) {
   console.log(`[smartlead] Updating campaign ${campaignId} status to ${status}`);
   const { ok, data } = await smartleadFetch(`/campaigns/${campaignId}/status`, {
-    method: 'PATCH',
+    method: 'POST',
     body: JSON.stringify({ status }),
   });
   return ok ? data : null;
