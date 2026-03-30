@@ -156,7 +156,7 @@ export async function processMessage(record) {
     const { employee, skill } = decision;
 
     // Skills that should always be dispatched directly (no mobilisation)
-    const alwaysDirectDispatch = ['itp_refiner'];
+    const alwaysDirectDispatch = [];
 
     // Skills that should dispatch directly if the user has done the mobilisation before
     const directIfReturning = ['target_finder_ten_leads'];
@@ -180,6 +180,7 @@ export async function processMessage(record) {
       'create_new_sender': 'setup_sender',
       'analyse_website': 'sign_up_get_website',
       'define_itp': 'signup_ideal_target_profile',
+      'itp_refiner': 'initiate_itp_refiner',
     };
     const mobilisationName = skillToMobilisation[skill] ?? `initiate_${skill}`;
     console.log(`[amp] trigger_skill → ${employee}/${skill} → broadcasting start_mobilisation: ${mobilisationName}`);

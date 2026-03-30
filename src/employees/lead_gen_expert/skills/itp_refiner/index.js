@@ -8,7 +8,7 @@ import { dispatchSkill } from '../../../index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export async function executeSkill({ user_details_id, itp_id }) {
+export async function executeSkill({ user_details_id, itp_id, user_feedback }) {
   const admin = getSupabaseAdmin();
 
   // Resolve ITP: use provided id, or fall back to most recent for the account
@@ -35,8 +35,8 @@ export async function executeSkill({ user_details_id, itp_id }) {
 
   const rejections = (rejectedLeads ?? []).filter(l => l.rejection_reason?.trim());
 
-  if (rejections.length === 0) {
-    console.log('[itp_refiner] No rejection reasons found, skipping refinement');
+  if (rejections.length === 0 && !user_feedback) {
+    console.log('[itp_refiner] No rejection reasons or user feedback found, skipping refinement');
     // Just trigger target finder to find more
     dispatchSkill('lead_gen_expert', 'target_finder_ten_leads', { user_details_id, itp_id: resolvedItpId })
       .catch(err => console.error('[itp_refiner] target_finder dispatch error:', err));
@@ -63,9 +63,10 @@ export async function executeSkill({ user_details_id, itp_id }) {
       score_reason: l.score_reason,
       user_rejection_reason: l.rejection_reason,
     })),
+    ...(user_feedback ? { user_feedback_from_chat: user_feedback } : {}),
   }, null, 2);
 
-  console.log(`[itp_refiner] Refining ITP ${resolvedItpId} based on ${rejections.length} rejection(s)`);
+  console.log(`[itp_refiner] Refining ITP ${resolvedItpId} based on ${rejections.length} rejection(s)${user_feedback ? ` + user feedback: "${user_feedback}"` : ''}`);
 
   const response = await getAnthropic().messages.create({
     model: 'claude-sonnet-4-6',
