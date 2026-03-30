@@ -126,14 +126,14 @@ export async function createEmailAccount({ from_name, from_email, smtp_host, smt
     body: JSON.stringify({
       from_name,
       from_email,
-      username: smtp_username ?? from_email,
+      user_name: smtp_username ?? from_email,
       password: smtp_password,
       smtp_host,
       smtp_port: smtp_port ?? 587,
-      smtp_port_type: 'TLS',
       imap_host,
       imap_port: imap_port ?? 993,
       max_email_per_day: max_email_per_day ?? 50,
+      warmup_enabled: true,
     }),
   });
   if (!ok) return null;

@@ -80,6 +80,8 @@ export async function executeSkill({ user_details_id, campaign_id }) {
   }
 
   // ── Step 5: Attach email account ───────────────────────────────────
+  console.log(`[sync_to_smartlead] Sender:`, sender ? `id=${sender.id} email=${sender.email} smtp_host=${sender.smtp_host} sl_account=${sender.smartlead_email_account_id}` : 'NO SENDER (sender_id is null)');
+
   if (sender) {
     let slEmailAccountId = sender.smartlead_email_account_id;
 
