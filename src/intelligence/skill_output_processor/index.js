@@ -53,9 +53,11 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
       const highScoreCount = output.high_score_count ?? 0;
       const totalTargets = output.total_targets ?? 0;
 
-      // Check if user already has 10+ approved leads — if so, auto-approve new ones
+      // Check if THIS ITP already has 10+ approved leads — if so, auto-approve new ones
       const { count: existingApproved } = await getSupabaseAdmin()
-        .from('leads').select('id', { count: 'exact', head: true }).eq('approved', true);
+        .from('leads').select('id', { count: 'exact', head: true })
+        .eq('itp_id', output.itp_id)
+        .eq('approved', true);
       const alreadyValidated = (existingApproved ?? 0) >= 10;
 
       if (alreadyValidated && output.itp_id) {
