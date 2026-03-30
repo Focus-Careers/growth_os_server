@@ -5,12 +5,11 @@ import {
   saveSequences,
   setSchedule,
   setCampaignSettings,
-  getEmailAccounts,
-  createEmailAccount,
   attachEmailAccount,
   addLeads,
   registerCampaignWebhook,
 } from '../../../../config/smartlead.js';
+import { resolveSmartleadSender } from '../../helpers/resolve_smartlead_sender.js';
 
 export async function executeSkill({ user_details_id, campaign_id }) {
   const admin = getSupabaseAdmin();
@@ -39,11 +38,6 @@ export async function executeSkill({ user_details_id, campaign_id }) {
     .single();
 
   if (!campaign) throw new Error(`Campaign not found: ${campaign_id}`);
-
-  // Load sender
-  const { data: sender } = campaign.sender_id
-    ? await admin.from('senders').select('*').eq('id', campaign.sender_id).single()
-    : { data: null };
 
   // ── Step 1: Create Smartlead campaign ──────────────────────────────
   const slCampaign = await slCreateCampaign(campaign.name);
@@ -88,49 +82,13 @@ export async function executeSkill({ user_details_id, campaign_id }) {
   }
 
   // ── Step 5: Attach email account ───────────────────────────────────
-  console.log(`[sync_to_smartlead] Sender:`, sender ? `id=${sender.id} email=${sender.email} smtp_host=${sender.smtp_host} sl_account=${sender.smartlead_email_account_id}` : 'NO SENDER (sender_id is null)');
-
-  if (sender) {
-    let slEmailAccountId = sender.smartlead_email_account_id;
-
-    if (!slEmailAccountId) {
-      // Check if this email already exists in Smartlead
-      const existingAccounts = await getEmailAccounts();
-      const existing = existingAccounts.find(a => a.from_email === sender.email);
-
-      if (existing) {
-        slEmailAccountId = String(existing.id);
-      } else if (sender.smtp_host && sender.smtp_password) {
-        // Create new email account in Smartlead
-        const newAccount = await createEmailAccount({
-          from_name: sender.display_name ?? sender.email,
-          from_email: sender.email,
-          smtp_host: sender.smtp_host,
-          smtp_port: sender.smtp_port ?? 587,
-          smtp_username: sender.smtp_username ?? sender.email,
-          smtp_password: sender.smtp_password,
-          imap_host: sender.imap_host,
-          imap_port: sender.imap_port ?? 993,
-          max_email_per_day: 50,
-        });
-        if (newAccount?.id) {
-          slEmailAccountId = String(newAccount.id);
-        }
-      } else {
-        console.warn('[sync_to_smartlead] Sender has no SMTP details, skipping email account setup');
-      }
-
-      // Save Smartlead email account ID to our DB
-      if (slEmailAccountId) {
-        await admin.from('senders')
-          .update({ smartlead_email_account_id: slEmailAccountId })
-          .eq('id', sender.id);
-      }
-    }
-
+  if (campaign.sender_id) {
+    const { slEmailAccountId } = await resolveSmartleadSender(campaign.sender_id);
     if (slEmailAccountId) {
       await attachEmailAccount(slCampaignId, parseInt(slEmailAccountId));
     }
+  } else {
+    console.log('[sync_to_smartlead] No sender_id on campaign, skipping email account setup');
   }
 
   // ── Step 6: Push leads (contacts) ──────────────────────────────────
