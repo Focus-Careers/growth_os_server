@@ -73,7 +73,7 @@ router.post('/', async (req, res) => {
     const leadEmail = payload.lead?.email ?? payload.lead_email;
     const slCampaignId = String(payload.campaign_id);
     // Reply body can come in multiple formats
-    const replyBody = payload.reply?.body ?? replyBody ?? payload.message ?? null;
+    const replyBody = payload.reply?.body ?? payload.reply_body ?? payload.message ?? null;
     // Category can come in multiple formats
     const category = payload.new_category ?? payload.reply_category ?? payload.category ?? null;
 

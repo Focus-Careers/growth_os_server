@@ -18,8 +18,7 @@ steps:
 
   - id: "complete_find_targets"
     type: "end_flow"
-    messages:
-      - "Great — Belfort's on it. I'll let you know when the results are ready."
+    messages: []
 
   - id: "free_chat"
     type: "end_flow"

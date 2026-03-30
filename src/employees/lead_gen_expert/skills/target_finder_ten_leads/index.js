@@ -309,7 +309,7 @@ export async function executeSkill({ user_details_id, itp_id }) {
     output: {
       itp_id: itp.id,
       high_score_count: highScoreTotal,
-      total_leads: (finalLeads ?? []).length,
+      total_targets: (finalLeads ?? []).length,
     },
   });
 
