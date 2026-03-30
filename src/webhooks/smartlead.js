@@ -11,6 +11,13 @@ const EVENT_TO_STATUS = {
   'EMAIL_REPLIED': 'replied',
   'EMAIL_BOUNCED': 'bounced',
   'EMAIL_UNSUBSCRIBED': 'unsubscribed',
+  // Smartlead per-campaign webhooks use LEAD_ prefix
+  'LEAD_SENT': 'sent',
+  'LEAD_OPENED': 'opened',
+  'LEAD_REPLIED': 'replied',
+  'LEAD_BOUNCED': 'bounced',
+  'LEAD_UNSUBSCRIBED': 'unsubscribed',
+  'LEAD_CLICKED': 'opened',
 };
 
 /**

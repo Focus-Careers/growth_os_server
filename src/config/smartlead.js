@@ -14,7 +14,14 @@ async function smartleadFetch(path, options = {}) {
       ...(options.headers ?? {}),
     },
   });
-  const data = await res.json();
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    console.error(`[smartlead] ${options.method ?? 'GET'} ${path} → ${res.status}: non-JSON response: ${text.slice(0, 200)}`);
+    return { ok: false, status: res.status, data: null };
+  }
   if (!res.ok) {
     console.error(`[smartlead] ${options.method ?? 'GET'} ${path} → ${res.status}:`, JSON.stringify(data));
   }
@@ -193,21 +200,22 @@ export async function getCampaignStatistics(campaignId) {
 }
 
 /**
- * Register a webhook URL for campaign events.
- * Idempotent — Smartlead deduplicates by URL.
+ * Register a webhook URL for a specific campaign.
+ * Per-campaign webhook — must be called for each campaign.
  */
-export async function registerWebhook(webhookUrl, eventTypes) {
-  console.log(`[smartlead] Registering webhook: ${webhookUrl}`);
-  const { ok, data } = await smartleadFetch('/webhooks', {
+export async function registerCampaignWebhook(campaignId, webhookUrl, eventTypes) {
+  console.log(`[smartlead] Registering webhook for campaign ${campaignId}: ${webhookUrl}`);
+  const { ok, data } = await smartleadFetch(`/campaigns/${campaignId}/webhooks`, {
     method: 'POST',
     body: JSON.stringify({
+      id: null,
+      name: 'GrowthOS Webhook',
       webhook_url: webhookUrl,
       event_types: eventTypes,
-      is_active: true,
     }),
   });
   if (!ok) {
-    console.error('[smartlead] Failed to register webhook');
+    console.error(`[smartlead] Failed to register webhook for campaign ${campaignId}`);
     return null;
   }
   console.log(`[smartlead] Webhook registered: id=${data?.id}`);

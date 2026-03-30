@@ -160,7 +160,7 @@ export async function executeSkill({ user_details_id, itp_id }) {
       },
       body: JSON.stringify({
         q: query,
-        num: 20,
+        num: 10,
         ...(itp.location ? { location: itp.location } : {}),
         hl: 'en',
       }),
