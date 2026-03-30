@@ -9,6 +9,7 @@ import {
   createEmailAccount,
   attachEmailAccount,
   addLeads,
+  registerWebhook,
 } from '../../../../config/smartlead.js';
 
 export async function executeSkill({ user_details_id, campaign_id }) {
@@ -69,6 +70,17 @@ export async function executeSkill({ user_details_id, campaign_id }) {
 
   // ── Step 4: Configure settings ─────────────────────────────────────
   await setCampaignSettings(slCampaignId);
+
+  // ── Step 4b: Register webhook ──────────────────────────────────────
+  const webhookBaseUrl = process.env.WEBHOOK_BASE_URL;
+  if (webhookBaseUrl) {
+    await registerWebhook(
+      `${webhookBaseUrl}/api/webhooks/smartlead`,
+      ['EMAIL_SENT', 'EMAIL_OPENED', 'EMAIL_REPLIED', 'EMAIL_BOUNCED', 'LEAD_UNSUBSCRIBED', 'LEAD_CATEGORY_UPDATED']
+    );
+  } else {
+    console.warn('[sync_to_smartlead] WEBHOOK_BASE_URL not set, skipping webhook registration');
+  }
 
   // ── Step 5: Attach email account ───────────────────────────────────
   if (sender) {

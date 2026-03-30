@@ -191,3 +191,25 @@ export async function getCampaignStatistics(campaignId) {
   const { ok, data } = await smartleadFetch(`/campaigns/${campaignId}/statistics`);
   return ok ? data : null;
 }
+
+/**
+ * Register a webhook URL for campaign events.
+ * Idempotent — Smartlead deduplicates by URL.
+ */
+export async function registerWebhook(webhookUrl, eventTypes) {
+  console.log(`[smartlead] Registering webhook: ${webhookUrl}`);
+  const { ok, data } = await smartleadFetch('/webhooks', {
+    method: 'POST',
+    body: JSON.stringify({
+      webhook_url: webhookUrl,
+      event_types: eventTypes,
+      is_active: true,
+    }),
+  });
+  if (!ok) {
+    console.error('[smartlead] Failed to register webhook');
+    return null;
+  }
+  console.log(`[smartlead] Webhook registered: id=${data?.id}`);
+  return data;
+}
