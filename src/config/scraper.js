@@ -31,12 +31,27 @@ export async function scrapeWebsite(domain) {
       });
       clearTimeout(timeout);
 
-      if (!res.ok) continue;
+      if (!res.ok) {
+        console.log(`[scraper] ${url} → HTTP ${res.status}`);
+        continue;
+      }
 
       const contentType = res.headers.get('content-type') ?? '';
       if (!contentType.includes('text/html')) continue;
 
       const html = await res.text();
+
+      // Detect Cloudflare challenge pages
+      const isCloudflare = html.includes('cf-browser-verification')
+        || html.includes('challenge-platform')
+        || html.includes('cf_chl_opt')
+        || (html.includes('Just a moment') && html.includes('cloudflare'));
+
+      if (isCloudflare) {
+        console.log(`[scraper] ${url} → BLOCKED by Cloudflare challenge`);
+        continue;
+      }
+
       const $ = cheerio.load(html);
 
       // Remove scripts, styles, nav, footer to reduce noise
