@@ -64,14 +64,16 @@ export async function processMessage(record) {
     const { data: campaigns } = await getSupabaseAdmin()
       .from('campaigns').select('id, name, status').eq('account_id', ud.account_id);
 
-    // Check if ITP is validated (10+ approved leads)
-    const { count: _approvedCount } = await getSupabaseAdmin()
-      .from('leads')
-      .select('id', { count: 'exact', head: true })
-      .eq('approved', true);
-
-    approvedCount = _approvedCount ?? 0;
-    const itpValidated = approvedCount >= 10;
+    // Check per-ITP validation (any ITP with 10+ approved leads)
+    const { data: itps } = await getSupabaseAdmin()
+      .from('itp').select('id, name').eq('account_id', ud.account_id);
+    let hasValidatedItp = false;
+    for (const itp of (itps ?? [])) {
+      const { count } = await getSupabaseAdmin()
+        .from('leads').select('id', { count: 'exact', head: true })
+        .eq('itp_id', itp.id).eq('approved', true);
+      if ((count ?? 0) >= 10) { hasValidatedItp = true; approvedCount = count ?? 0; break; }
+    }
 
     const contextParts = [];
     if (ud.active_skill) {
@@ -80,10 +82,10 @@ export async function processMessage(record) {
     if (ud.queued_mobilisations?.length) contextParts.push(`There are ${ud.queued_mobilisations.length} queued actions waiting to run.`);
     if (campaigns?.length) contextParts.push(`Existing campaigns: ${campaigns.map(c => `${c.name} (${c.status})`).join(', ')}.`);
 
-    if (!itpValidated) {
-      contextParts.push('The ITP has NOT been validated yet (fewer than 10 approved leads). If the user wants to create a campaign, explain that we need to find and approve leads first to make sure the ITP is accurate. Suggest starting with target finding instead.');
+    if (!hasValidatedItp) {
+      contextParts.push('No ITP has been validated yet (none have 10+ approved leads). If the user wants to create a campaign, explain that we need to find and approve leads first to make sure the ITP is accurate. Suggest starting with target finding instead.');
     } else {
-      contextParts.push('The ITP has been validated with 10+ approved leads. Campaign creation is available.');
+      contextParts.push('At least one ITP has been validated with 10+ approved leads. Campaign creation is available.');
     }
     if (contextParts.length) activeContext = `\n\n# Current State\n${contextParts.join('\n')}`;
   }
@@ -154,7 +156,7 @@ export async function processMessage(record) {
     const { employee, skill } = decision;
 
     // Skills that should always be dispatched directly (no mobilisation)
-    const alwaysDirectDispatch = ['itp_refiner'];
+    const alwaysDirectDispatch = [];
 
     // Skills that should dispatch directly if the user has done the mobilisation before
     const directIfReturning = ['target_finder_ten_leads'];
@@ -178,6 +180,7 @@ export async function processMessage(record) {
       'create_new_sender': 'setup_sender',
       'analyse_website': 'sign_up_get_website',
       'define_itp': 'signup_ideal_target_profile',
+      'itp_refiner': 'initiate_itp_refiner',
     };
     const mobilisationName = skillToMobilisation[skill] ?? `initiate_${skill}`;
     console.log(`[amp] trigger_skill → ${employee}/${skill} → broadcasting start_mobilisation: ${mobilisationName}`);

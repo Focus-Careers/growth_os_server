@@ -1,0 +1,21 @@
+name: "initiate_itp_refiner"
+start_id: "ask_why"
+
+steps:
+  - id: "ask_why"
+    type: "free_type"
+    messages:
+      - "Sure — what's not working with the current targets? For example, are they too small, wrong industry, wrong location, or something else?"
+    response_key: "user_feedback"
+    next_id: "complete"
+
+  - id: "complete"
+    type: "end_flow"
+    messages:
+      - "Got it — I'll get Belfort to refine your target profile based on that feedback and find new targets."
+
+on_complete:
+  employee: "lead_gen_expert"
+  skill: "itp_refiner"
+  inputs:
+    user_feedback: "user_feedback"

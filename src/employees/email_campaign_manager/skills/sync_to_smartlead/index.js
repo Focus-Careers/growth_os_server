@@ -5,16 +5,30 @@ import {
   saveSequences,
   setSchedule,
   setCampaignSettings,
-  getEmailAccounts,
-  createEmailAccount,
   attachEmailAccount,
   addLeads,
+  registerCampaignWebhook,
 } from '../../../../config/smartlead.js';
+import { resolveSmartleadSender } from '../../helpers/resolve_smartlead_sender.js';
 
 export async function executeSkill({ user_details_id, campaign_id }) {
   const admin = getSupabaseAdmin();
 
   console.log(`[sync_to_smartlead] Starting sync for campaign ${campaign_id}`);
+
+  // Atomic dedup: claim the sync by setting a placeholder, skip if already claimed
+  const { data: claimed } = await admin
+    .from('campaigns')
+    .update({ smartlead_campaign_id: 'syncing' })
+    .eq('id', campaign_id)
+    .is('smartlead_campaign_id', null)
+    .select('id')
+    .single();
+
+  if (!claimed) {
+    console.log(`[sync_to_smartlead] Campaign ${campaign_id} already syncing or synced, skipping`);
+    return { campaign_id, skipped: true };
+  }
 
   // Load campaign
   const { data: campaign } = await admin
@@ -24,17 +38,6 @@ export async function executeSkill({ user_details_id, campaign_id }) {
     .single();
 
   if (!campaign) throw new Error(`Campaign not found: ${campaign_id}`);
-
-  // Dedup: skip if already synced to Smartlead
-  if (campaign.smartlead_campaign_id) {
-    console.log(`[sync_to_smartlead] Campaign ${campaign_id} already synced (smartlead_id=${campaign.smartlead_campaign_id}), skipping`);
-    return { campaign_id, smartlead_campaign_id: campaign.smartlead_campaign_id, skipped: true };
-  }
-
-  // Load sender
-  const { data: sender } = campaign.sender_id
-    ? await admin.from('senders').select('*').eq('id', campaign.sender_id).single()
-    : { data: null };
 
   // ── Step 1: Create Smartlead campaign ──────────────────────────────
   const slCampaign = await slCreateCampaign(campaign.name);
@@ -70,48 +73,22 @@ export async function executeSkill({ user_details_id, campaign_id }) {
   // ── Step 4: Configure settings ─────────────────────────────────────
   await setCampaignSettings(slCampaignId);
 
+  // ── Step 4b: Register webhook ──────────────────────────────────────
+  const webhookBaseUrl = process.env.WEBHOOK_BASE_URL;
+  if (webhookBaseUrl) {
+    await registerCampaignWebhook(slCampaignId, `${webhookBaseUrl}/api/webhooks/smartlead`);
+  } else {
+    console.warn('[sync_to_smartlead] WEBHOOK_BASE_URL not set, skipping webhook registration');
+  }
+
   // ── Step 5: Attach email account ───────────────────────────────────
-  if (sender) {
-    let slEmailAccountId = sender.smartlead_email_account_id;
-
-    if (!slEmailAccountId) {
-      // Check if this email already exists in Smartlead
-      const existingAccounts = await getEmailAccounts();
-      const existing = existingAccounts.find(a => a.from_email === sender.email);
-
-      if (existing) {
-        slEmailAccountId = String(existing.id);
-      } else if (sender.smtp_host && sender.smtp_password) {
-        // Create new email account in Smartlead
-        const newAccount = await createEmailAccount({
-          from_name: sender.display_name ?? sender.email,
-          from_email: sender.email,
-          smtp_host: sender.smtp_host,
-          smtp_port: sender.smtp_port ?? 587,
-          smtp_username: sender.smtp_username ?? sender.email,
-          smtp_password: sender.smtp_password,
-          imap_host: sender.imap_host,
-          imap_port: sender.imap_port ?? 993,
-          max_email_per_day: 50,
-        });
-        if (newAccount?.id) {
-          slEmailAccountId = String(newAccount.id);
-        }
-      } else {
-        console.warn('[sync_to_smartlead] Sender has no SMTP details, skipping email account setup');
-      }
-
-      // Save Smartlead email account ID to our DB
-      if (slEmailAccountId) {
-        await admin.from('senders')
-          .update({ smartlead_email_account_id: slEmailAccountId })
-          .eq('id', sender.id);
-      }
-    }
-
+  if (campaign.sender_id) {
+    const { slEmailAccountId } = await resolveSmartleadSender(campaign.sender_id);
     if (slEmailAccountId) {
       await attachEmailAccount(slCampaignId, parseInt(slEmailAccountId));
     }
+  } else {
+    console.log('[sync_to_smartlead] No sender_id on campaign, skipping email account setup');
   }
 
   // ── Step 6: Push leads (contacts) ──────────────────────────────────

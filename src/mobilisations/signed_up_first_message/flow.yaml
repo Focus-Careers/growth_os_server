@@ -4,8 +4,8 @@ start_id: "time_to_start"
 steps:
   - id: "time_to_start"
     messages:
-      - "The first thing I'd recommend is finding some target companies that match your ideal profile. I'll get Belfort on it — he'll search the web, score each company against your ITP, and find contact details."
-      - "Once he's done, you'll review the results to make sure we're on the right track. Sound good?"
+      - "The first thing I'd recommend is finding some target companies that match your ideal profile. Belfort, our lead gen expert, can search the web, score each company against your ITP, and find contact details."
+      - "Once he's done, you'll review the results to make sure we're on the right track. Want to get started?"
     type: "option_set_with_input"
     next_id: "free_chat"
     options:
@@ -18,8 +18,7 @@ steps:
 
   - id: "complete_find_targets"
     type: "end_flow"
-    messages:
-      - "Great — Belfort's on it. I'll let you know when the results are ready."
+    messages: []
 
   - id: "free_chat"
     type: "end_flow"

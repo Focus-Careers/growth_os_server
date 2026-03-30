@@ -125,6 +125,19 @@ export async function dispatchSkill(employee, skill, inputs) {
         .from('user_details')
         .update({ active_skill: null })
         .eq('id', inputs.user_details_id);
+
+      // Send a Watson error message so the user knows what happened
+      const employeeName = {
+        lead_gen_expert: 'Belfort',
+        business_analyst: 'Warren',
+        email_campaign_manager: 'Draper',
+        office_administrator: 'Pepper',
+      }[employee] ?? employee;
+
+      const errorMessage = `Sorry — ${employeeName} ran into a problem with that task. These things happen occasionally. Want to try again, or is there something else I can help with?`;
+      await getSupabaseAdmin()
+        .from('messages')
+        .insert({ user_details_id: inputs.user_details_id, message_body: errorMessage, is_agent: true });
     }
     throw err;
   }

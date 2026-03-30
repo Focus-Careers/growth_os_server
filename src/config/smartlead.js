@@ -14,7 +14,14 @@ async function smartleadFetch(path, options = {}) {
       ...(options.headers ?? {}),
     },
   });
-  const data = await res.json();
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    console.error(`[smartlead] ${options.method ?? 'GET'} ${path} → ${res.status}: non-JSON response: ${text.slice(0, 200)}`);
+    return { ok: false, status: res.status, data: null };
+  }
   if (!res.ok) {
     console.error(`[smartlead] ${options.method ?? 'GET'} ${path} → ${res.status}:`, JSON.stringify(data));
   }
@@ -119,18 +126,18 @@ export async function createEmailAccount({ from_name, from_email, smtp_host, smt
     body: JSON.stringify({
       from_name,
       from_email,
-      username: smtp_username ?? from_email,
+      user_name: smtp_username ?? from_email,
       password: smtp_password,
       smtp_host,
       smtp_port: smtp_port ?? 587,
-      smtp_port_type: 'TLS',
       imap_host,
       imap_port: imap_port ?? 993,
       max_email_per_day: max_email_per_day ?? 50,
+      warmup_enabled: true,
     }),
   });
   if (!ok) return null;
-  console.log(`[smartlead] Email account created: id=${data.id}`);
+  console.log(`[smartlead] Email account created:`, JSON.stringify(data));
   return data;
 }
 
@@ -141,8 +148,9 @@ export async function attachEmailAccount(campaignId, emailAccountId) {
   console.log(`[smartlead] Attaching email account ${emailAccountId} to campaign ${campaignId}`);
   const { ok, data } = await smartleadFetch(`/campaigns/${campaignId}/email-accounts`, {
     method: 'POST',
-    body: JSON.stringify({ email_account_id: emailAccountId }),
+    body: JSON.stringify({ email_account_ids: [emailAccountId] }),
   });
+  console.log(`[smartlead] Attach response:`, JSON.stringify(data));
   return ok ? data : null;
 }
 
@@ -166,7 +174,7 @@ export async function addLeads(campaignId, leads) {
     }),
   });
   if (ok) {
-    console.log(`[smartlead] Leads added: ${data.added_count ?? 0} added, ${data.skipped_count ?? 0} skipped`);
+    console.log(`[smartlead] Leads response:`, JSON.stringify(data));
   }
   return ok ? data : null;
 }
@@ -190,4 +198,37 @@ export async function updateCampaignStatus(campaignId, status) {
 export async function getCampaignStatistics(campaignId) {
   const { ok, data } = await smartleadFetch(`/campaigns/${campaignId}/statistics`);
   return ok ? data : null;
+}
+
+/**
+ * Register a webhook URL for a specific campaign.
+ * Uses the working endpoint from maid-server: POST /webhook/create
+ */
+export async function registerCampaignWebhook(campaignId, webhookUrl) {
+  console.log(`[smartlead] Registering webhook for campaign ${campaignId}: ${webhookUrl}`);
+  const { ok, data } = await smartleadFetch('/webhook/create', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: `growthOS-webhook-${campaignId}`,
+      webhook_url: webhookUrl,
+      email_campaign_id: campaignId,
+      association_type: 3,
+      event_type_map: {
+        EMAIL_SENT: true,
+        FIRST_EMAIL_SENT: true,
+        EMAIL_OPEN: true,
+        EMAIL_LINK_CLICK: true,
+        EMAIL_REPLY: true,
+        LEAD_UNSUBSCRIBED: true,
+        LEAD_CATEGORY_UPDATED: true,
+        EMAIL_BOUNCE: true,
+      },
+    }),
+  });
+  if (!ok) {
+    console.error(`[smartlead] Failed to register webhook for campaign ${campaignId}`);
+    return null;
+  }
+  console.log(`[smartlead] Webhook registered:`, JSON.stringify(data));
+  return data;
 }

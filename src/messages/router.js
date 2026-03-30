@@ -8,6 +8,9 @@ import { Router } from 'express';
 import { processMessage } from '../intelligence/app_message_processor/index.js';
 import { analyseAndGreet } from '../intelligence/welcome_back/index.js';
 import { generateDraperSummary } from '../intelligence/draper_summary/index.js';
+import { generateBelfortSummary } from '../intelligence/belfort_summary/index.js';
+import { generateWarrenSummary } from '../intelligence/warren_summary/index.js';
+import { generatePepperSummary } from '../intelligence/pepper_summary/index.js';
 
 const router = Router();
 
@@ -52,6 +55,45 @@ router.post('/draper-summary', async (req, res) => {
     return res.json({ message });
   } catch (err) {
     console.error('[draper-summary] error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/messages/belfort-summary
+router.post('/belfort-summary', async (req, res) => {
+  try {
+    const { account_id, firstname } = req.body;
+    if (!account_id) return res.status(400).json({ error: 'account_id required' });
+    const message = await generateBelfortSummary(account_id, firstname);
+    return res.json({ message });
+  } catch (err) {
+    console.error('[belfort-summary] error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/messages/warren-summary
+router.post('/warren-summary', async (req, res) => {
+  try {
+    const { account_id, firstname } = req.body;
+    if (!account_id) return res.status(400).json({ error: 'account_id required' });
+    const message = await generateWarrenSummary(account_id, firstname);
+    return res.json({ message });
+  } catch (err) {
+    console.error('[warren-summary] error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/messages/pepper-summary
+router.post('/pepper-summary', async (req, res) => {
+  try {
+    const { account_id, firstname, user_details_id } = req.body;
+    if (!account_id) return res.status(400).json({ error: 'account_id required' });
+    const message = await generatePepperSummary(account_id, firstname, user_details_id);
+    return res.json({ message });
+  } catch (err) {
+    console.error('[pepper-summary] error:', err);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });

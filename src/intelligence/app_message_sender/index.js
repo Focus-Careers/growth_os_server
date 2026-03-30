@@ -22,6 +22,7 @@ const skillPromptMap = {
   'email_campaign_manager/create_campaign': 'create_campaign.md',
   'email_campaign_manager/launch_campaign': 'launch_campaign.md',
   'email_campaign_manager/sync_to_smartlead': 'sync_to_smartlead.md',
+  'email_campaign_manager/reply_received': 'reply_received.md',
 };
 
 export async function sendDirectResponse({ user_details_id, conversationHistory }) {

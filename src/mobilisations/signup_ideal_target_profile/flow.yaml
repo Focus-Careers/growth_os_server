@@ -16,7 +16,7 @@ steps:
   - id: "complete"
     messages:
     - "OK, we're going to generate your ideal target profile, or ITP, based on your website and the details you've provided."
-    - "Let me consult the business analyst for this one. Two seconds."
+    - "I'll get Warren, our business analyst, to put this together. Give him a moment."
     type: "end_flow"
 
 on_complete:

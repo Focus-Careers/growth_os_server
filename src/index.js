@@ -6,6 +6,7 @@ import officeAdministratorRouter from './employees/office_administrator/router.j
 import messagesRouter from './messages/router.js';
 import skillsRouter from './skills/router.js';
 import smartleadWebhookRouter from './webhooks/smartlead.js';
+import campaignsRouter from './campaigns/router.js';
 
 dotenv.config();
 
@@ -34,6 +35,7 @@ app.use('/api/mobilisation', mobilisationRouter);
 app.use('/api/employee/office-administrator', officeAdministratorRouter);
 app.use('/api/messages', messagesRouter);
 app.use('/api/skills', skillsRouter);
+app.use('/api/campaigns', campaignsRouter);
 
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
