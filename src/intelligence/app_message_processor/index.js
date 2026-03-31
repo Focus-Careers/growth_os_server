@@ -48,6 +48,18 @@ async function loadSkillDescriptions() {
   return skills;
 }
 
+async function sendFallbackMessage(user_details_id) {
+  try {
+    await getSupabaseAdmin().from('messages').insert({
+      user_details_id,
+      message_body: "Sorry, I'm having trouble connecting right now. Please send your message again and I'll pick it up.",
+      is_agent: true,
+    });
+  } catch (err) {
+    console.error('[amp] Failed to send fallback message:', err);
+  }
+}
+
 export async function processMessage(record) {
   const { user_details_id } = record;
 
@@ -63,6 +75,7 @@ export async function processMessage(record) {
   if (!userDetails?.signup_complete) return;
   if (userDetails?.active_mobilisation) return;
 
+  try {
   console.log('[amp] loading messages...');
   const { data: history } = await getSupabaseAdmin()
     .from('messages')
@@ -225,4 +238,8 @@ export async function processMessage(record) {
   }
 
   console.warn('[amp] unknown decision path:', decision.path);
+  } catch (err) {
+    console.error('[amp] processMessage failed after retries:', err);
+    await sendFallbackMessage(user_details_id);
+  }
 }

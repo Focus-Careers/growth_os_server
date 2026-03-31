@@ -45,23 +45,26 @@ const skillPromptMap = {
 export async function sendDirectResponse({ user_details_id, conversationHistory }) {
   await broadcastTyping(user_details_id, true);
 
-  const directResponsePrompt = await readFile(join(__dirname, 'direct_response.md'), 'utf-8');
+  try {
+    const directResponsePrompt = await readFile(join(__dirname, 'direct_response.md'), 'utf-8');
 
-  const response = await callClaude({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 512,
-    system: directResponsePrompt,
-    messages: [{ role: 'user', content: conversationHistory }],
-  });
+    const response = await callClaude({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 512,
+      system: directResponsePrompt,
+      messages: [{ role: 'user', content: conversationHistory }],
+    });
 
-  const message_body = response.content[0].text.trim();
-  await broadcastTyping(user_details_id, false);
+    const message_body = response.content[0].text.trim();
 
-  const { error } = await getSupabaseAdmin()
-    .from('messages')
-    .insert({ user_details_id, message_body, is_agent: true });
+    const { error } = await getSupabaseAdmin()
+      .from('messages')
+      .insert({ user_details_id, message_body, is_agent: true });
 
-  if (error) throw new Error('sendDirectResponse: failed to save message — ' + error.message);
+    if (error) throw new Error('sendDirectResponse: failed to save message — ' + error.message);
+  } finally {
+    await broadcastTyping(user_details_id, false);
+  }
 }
 
 export async function sendAppMessage({ type, employee, skill, user_details_id, sidebar = null, navigate_to = null, output }) {
