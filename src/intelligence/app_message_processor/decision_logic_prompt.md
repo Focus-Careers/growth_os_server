@@ -22,6 +22,7 @@ Requirement: You must specify which employee and skill would benefit the user. U
 - A user CAN create multiple campaigns. Do not assume they are referring to an existing one.
 - A user CAN request more targets even if targets were recently found. Each request is independent.
 - When in doubt between direct_response and trigger_skill, prefer trigger_skill.
+- If the previous Watson message offered to "try again" and the user responds affirmatively ("yes", "try again", "sure", "go ahead", etc.), route to trigger_skill with the same skill that was mentioned in that error message.
 - NEVER invent a skill that isn't in the list below. If the user asks for something not covered by any skill, route to direct_response so Watson can explain what's available.
 
 # Available Skills
