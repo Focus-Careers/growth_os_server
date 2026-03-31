@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import * as cheerio from 'cheerio';
 import { getAnthropic } from '../../../../config/anthropic.js';
+import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 import { fetchWithPuppeteer } from '../../../../config/puppeteer_fallback.js';
 
@@ -109,7 +110,7 @@ async function fetchWebsiteText(url) {
 
   if (pages.length === 0) {
     console.log(`[analyse_website] No usable content from ${domain}`);
-    return `[Website content could not be retrieved for ${domain}. The site may be behind Cloudflare protection or unavailable.]`;
+    return null;
   }
 
   return pages.map(p => `[Page: ${p.path}]\n${p.text}`).join('\n\n---\n\n');
@@ -121,13 +122,35 @@ export async function executeSkill({ website, user_details_id }) {
     fetchWebsiteText(website),
   ]);
 
+  // Build context — use website content if available, fall back to account data
+  let context = '';
+  if (websiteText) {
+    context = `Website content:\n${websiteText}`;
+  } else {
+    // Fetch account data as fallback context
+    const admin = getSupabaseAdmin();
+    const { data: ud } = await admin.from('user_details').select('account_id').eq('id', user_details_id).single();
+    if (ud?.account_id) {
+      const { data: account } = await admin.from('account')
+        .select('organisation_name, description, problem_solved')
+        .eq('id', ud.account_id).single();
+      if (account) {
+        const parts = [];
+        if (account.organisation_name) parts.push(`Company name: ${account.organisation_name}`);
+        if (account.description) parts.push(`Description: ${account.description}`);
+        if (account.problem_solved) parts.push(`Problem solved: ${account.problem_solved}`);
+        context = parts.length > 0 ? `Known information about this company:\n${parts.join('\n')}` : '';
+      }
+    }
+  }
+
   const message = await getAnthropic().messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 1024,
     messages: [
       {
         role: 'user',
-        content: `${prompt}\n\nWebsite URL: ${website}\n\nWebsite content:\n${websiteText}`,
+        content: `${prompt}\n\nWebsite URL: ${website}\n\n${context}`,
       },
     ],
   });
