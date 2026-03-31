@@ -28,5 +28,9 @@ You are an expert in UK business classification. Given an Ideal Target Profile (
 - 90-93: Arts, entertainment, recreation
 - 95-96: Other service activities
 
-CRITICAL: Respond with only a valid JSON array of SIC code strings. No explanation, no markdown. Example:
-["43320", "43341", "41201", "43390"]
+CRITICAL: Respond with only a valid JSON array of objects with "code" and "description" fields. The description should be a clear, plain English explanation of what companies with this SIC code actually do. No explanation, no markdown. Example:
+[
+  {"code": "43320", "description": "Joinery installation — companies that install doors, windows, staircases, and fitted furniture"},
+  {"code": "43341", "description": "Painting and decorating — companies that paint and decorate buildings"},
+  {"code": "41201", "description": "Construction of commercial buildings — companies that build offices, shops, and industrial units"}
+]
