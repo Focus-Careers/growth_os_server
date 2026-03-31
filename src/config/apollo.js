@@ -71,7 +71,7 @@ export async function searchCompaniesByName(companyName, locations = ['United Ki
 export async function searchPeopleAtCompany(domain, { perPage = 10 } = {}) {
   console.log(`[apollo] People search at ${domain}`);
   try {
-    const res = await fetch(`${APOLLO_BASE_URL}/mixed_people/search`, {
+    const res = await fetch(`${APOLLO_BASE_URL}/mixed_people/api_search`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({

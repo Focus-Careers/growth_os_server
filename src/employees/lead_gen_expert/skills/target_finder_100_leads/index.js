@@ -7,9 +7,14 @@ import { executeSkill as runEnrichTarget } from '../enrich_target/index.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 import { searchCompaniesHouseForItp } from '../target_finder_ten_leads/companies_house_search.js';
 import { isDomainBlocked } from '../target_finder_ten_leads/domain_resolver.js';
+import { buildSearchProfile } from '../target_finder_ten_leads/build_search_profile.js';
+import { shouldSkipCompany } from '../target_finder_ten_leads/company_filter.js';
+import { searchCompanies as searchCH, getCompanyProfile } from '../../../../config/companies_house.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HIGH_SCORE_THRESHOLD = 70;
+const TARGET_LEAD_COUNT = 100;
+const CH_BATCH_SIZE = 20;
 const MAX_SERPER_ITERATIONS = 200;
 const APOLLO_COMPANY_SEARCH_ENABLED = process.env.APOLLO_COMPANY_SEARCH_ENABLED === 'true';
 
@@ -47,9 +52,46 @@ async function buildDedupSets(accountId) {
   };
 }
 
-/**
- * After enrichment, add contacts to campaign and optionally sync to Smartlead.
- */
+function buildBuyerContext(searchProfile) {
+  const parts = [];
+  if (searchProfile.buyer_descriptions?.length) {
+    parts.push(`The types of businesses that typically buy from this company include: ${searchProfile.buyer_descriptions.join(', ')}.`);
+  }
+  if (searchProfile.customer_sic_codes?.length) {
+    parts.push(`Existing customers are commonly registered under SIC codes: ${searchProfile.customer_sic_codes.join(', ')}.`);
+  }
+  return parts.length > 0 ? parts.join(' ') : '';
+}
+
+async function scoreStructuredBatch(companies, fillTemplate, structuredScoreTemplate, buyerContext) {
+  const structuredList = companies.map((c, i) =>
+    `[${i}] Company: "${c.companyName}" (${c.domain ?? 'no website'})\n` +
+    `    Industry (SIC): ${c.sicDescription}\n` +
+    `    Location: ${c.location ?? 'Unknown'}\n` +
+    `    Founded: ${c.dateOfCreation ?? 'Unknown'}\n` +
+    `    Officers: ${c.officers?.map(o => `${o.first_name ?? ''} ${o.last_name ?? ''} (${o.role ?? 'unknown role'})`).join(', ') || 'None listed'}\n` +
+    `    Company Number: ${c.companyNumber}`
+  ).join('\n\n');
+
+  const scorePrompt = fillTemplate(structuredScoreTemplate, {
+    '{{structured_companies}}': structuredList,
+    '{{buyer_context}}': buyerContext,
+  });
+
+  const scoreResponse = await callClaude({
+    model: 'claude-sonnet-4-6', max_tokens: 4096,
+    messages: [{ role: 'user', content: scorePrompt }],
+  });
+
+  try {
+    const raw = scoreResponse.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+    return JSON.parse(raw);
+  } catch {
+    console.error('[target_finder_100] Failed to parse scores');
+    return [];
+  }
+}
+
 async function addContactsToCampaign(campaign_id, enrichResult, user_details_id) {
   if (!campaign_id || !enrichResult?.contacts?.length) return;
   const admin = getSupabaseAdmin();
@@ -65,7 +107,6 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
   }
   console.log(`[target_finder_100] Added ${enrichResult.contacts.length} contacts to campaign ${campaign_id}`);
 
-  // Push to Smartlead if campaign is synced
   const { data: campaignRow } = await admin
     .from('campaigns').select('smartlead_campaign_id').eq('id', campaign_id).single();
 
@@ -90,7 +131,6 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
 
         await addLeads(parseInt(campaignRow.smartlead_campaign_id), slLeads);
 
-        // Mark as synced
         const ccIds = [];
         for (const contact of enrichResult.contacts) {
           const { data: cc } = await admin
@@ -109,6 +149,49 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
   }
 }
 
+async function createLeadFromCH(chCompany, score, reason, itp, accountId, user_details_id, campaign_id, dedupSets) {
+  const admin = getSupabaseAdmin();
+
+  const { data: newTarget, error } = await admin.from('targets').insert({
+    domain: chCompany.domain, title: chCompany.companyName, link: chCompany.link,
+    companies_house_number: chCompany.companyNumber,
+    company_location: chCompany.location, industry: chCompany.sicDescription,
+  }).select('id').single();
+
+  if (error) { console.error('[target_finder_100] Target insert error:', error); return; }
+
+  const targetId = newTarget.id;
+  if (chCompany.domain) dedupSets.existingDomains.add(chCompany.domain);
+  if (chCompany.companyNumber) dedupSets.existingCHNumbers.add(chCompany.companyNumber);
+
+  await admin.from('leads').insert({
+    target_id: targetId, itp_id: itp.id, score, score_reason: reason ?? null, approved: true,
+  });
+
+  for (const officer of (chCompany.officers ?? [])) {
+    if (!officer.first_name && !officer.last_name) continue;
+    await admin.from('contacts').insert({
+      target_id: targetId, account_id: accountId,
+      first_name: officer.first_name, last_name: officer.last_name,
+      role: officer.role, email: null, source: 'companies_house',
+    });
+  }
+
+  if (chCompany.domain) {
+    try {
+      const enrichResult = await runEnrichTarget({ target_id: targetId, user_details_id, silent: true });
+      await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
+      await new Promise(r => setTimeout(r, 1000));
+    } catch (err) {
+      console.error(`[target_finder_100] Enrich error for ${chCompany.companyName}:`, err.message);
+    }
+  }
+}
+
+// ====================================================================
+// MAIN SKILL
+// ====================================================================
+
 export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
   const admin = getSupabaseAdmin();
 
@@ -123,7 +206,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
   if (!itp) throw new Error('No ITP found for account');
 
   const initialApprovedCount = await countApprovedLeads(itp.id);
-  const targetCount = initialApprovedCount + 100;
+  const targetCount = initialApprovedCount + TARGET_LEAD_COUNT;
   console.log(`[target_finder_100] Starting with ${initialApprovedCount} approved leads, aiming for ${targetCount}`);
 
   const { data: account } = await admin
@@ -131,12 +214,28 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
     .select('organisation_name, organisation_website, description, problem_solved')
     .eq('id', itp.account_id).single();
 
-  const searchPromptTemplate = await readFile(join(__dirname, 'prompt_generate_google_search.md'), 'utf-8');
-  const scorePromptTemplate = await readFile(join(__dirname, 'prompt_generate_company_score.md'), 'utf-8');
-  // Use the structured score prompt from the ten_leads skill directory
+  const { data: customers } = await admin
+    .from('customers').select('organisation_name, organisation_website')
+    .eq('account_id', userDetails.account_id);
+
+  let customerAnalysis = null;
+  if (customers?.length > 0) {
+    customerAnalysis = { customerSicCodes: [], customerLocations: [] };
+  }
+
+  // ── Build Search Profile ───────────────────────────────────────────
+  console.log('[target_finder_100] Building search profile...');
+  const searchProfile = await buildSearchProfile(itp, account, customerAnalysis);
+  const buyerContext = buildBuyerContext(searchProfile);
+
+  // Load prompt templates
   const structuredScoreTemplate = await readFile(
     join(__dirname, '..', 'target_finder_ten_leads', 'prompt_score_structured.md'), 'utf-8'
   );
+  const hybridScoreTemplate = await readFile(
+    join(__dirname, '..', 'target_finder_ten_leads', 'prompt_score_hybrid.md'), 'utf-8'
+  );
+  const searchPromptTemplate = await readFile(join(__dirname, 'prompt_generate_google_search.md'), 'utf-8');
 
   const accountPlaceholders = {
     '{{account_organisation_name}}': account?.organisation_name ?? '',
@@ -158,145 +257,188 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
   const dedupSets = await buildDedupSets(userDetails.account_id);
 
   // ================================================================
-  // PHASE 1: Companies House
+  // STEP 1: Customer Lookalike Search (highest quality)
   // ================================================================
-  console.log('[target_finder_100] === PHASE 1: Companies House ===');
+  if (searchProfile.customer_sic_codes?.length > 0) {
+    console.log('[target_finder_100] === STEP 1: Customer Lookalike ===');
 
-  try {
-    const chResults = await searchCompaniesHouseForItp({
-      itp,
-      existingDomains: dedupSets.existingDomains,
-      existingCHNumbers: dedupSets.existingCHNumbers,
-      customerDomains: dedupSets.customerDomains,
-    });
+    try {
+      const chResults = await searchCompaniesHouseForItp({
+        itp: { ...itp, sic_codes: searchProfile.customer_sic_codes },
+        existingDomains: dedupSets.existingDomains,
+        existingCHNumbers: dedupSets.existingCHNumbers,
+        customerDomains: dedupSets.customerDomains,
+      });
 
-    if (chResults.length > 0) {
-      // Score in batches of 20 to avoid token truncation
-      const CH_BATCH_SIZE = 20;
-      const allScored = [];
+      const filtered = chResults.filter(c => !shouldSkipCompany(c, searchProfile));
+      console.log(`[target_finder_100] Step 1: ${chResults.length} found, ${filtered.length} after pre-filter`);
 
-      for (let batchStart = 0; batchStart < chResults.length; batchStart += CH_BATCH_SIZE) {
-        const batch = chResults.slice(batchStart, batchStart + CH_BATCH_SIZE);
-        console.log(`[target_finder_100] Scoring CH batch ${Math.floor(batchStart / CH_BATCH_SIZE) + 1}: companies ${batchStart + 1}-${batchStart + batch.length} of ${chResults.length}`);
-
-        const structuredList = batch.map((c, i) =>
-          `[${i}] Company: "${c.companyName}" (${c.domain ?? 'no website'})\n` +
-          `    Industry (SIC): ${c.sicDescription}\n` +
-          `    Location: ${c.location ?? 'Unknown'}\n` +
-          `    Founded: ${c.dateOfCreation ?? 'Unknown'}\n` +
-          `    Officers: ${c.officers.map(o => `${o.first_name ?? ''} ${o.last_name ?? ''} (${o.role ?? 'unknown role'})`).join(', ') || 'None listed'}\n` +
-          `    Company Number: ${c.companyNumber}`
-        ).join('\n\n');
-
-        const scorePrompt = fillTemplate(structuredScoreTemplate, {
-          '{{structured_companies}}': structuredList,
-        });
-
-        const scoreResponse = await callClaude({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 4096,
-          messages: [{ role: 'user', content: scorePrompt }],
-        });
-
-        let scores = [];
-        try {
-          const raw = scoreResponse.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-          scores = JSON.parse(raw);
-        } catch { console.error('[target_finder_100] Failed to parse CH batch scores'); continue; }
-
-        for (const item of scores) {
-          const chCompany = batch[item.index];
-          if (chCompany) allScored.push({ chCompany, score: item.score, reason: item.reason });
-        }
-      }
-
-      for (const { chCompany, score, reason } of allScored) {
-        const item = { score, reason };
-
-        const { data: newTarget, error } = await admin.from('targets').insert({
-          domain: chCompany.domain,
-          title: chCompany.companyName,
-          link: chCompany.link,
-          companies_house_number: chCompany.companyNumber,
-          company_location: chCompany.location,
-          industry: chCompany.sicDescription,
-        }).select('id').single();
-
-        if (error) continue;
-        const targetId = newTarget.id;
-        if (chCompany.domain) dedupSets.existingDomains.add(chCompany.domain);
-        dedupSets.existingCHNumbers.add(chCompany.companyNumber);
-
-        if ((item.score ?? 0) >= HIGH_SCORE_THRESHOLD) {
-          await admin.from('leads').insert({
-            target_id: targetId, itp_id: itp.id,
-            score: item.score, score_reason: item.reason ?? null, approved: true,
-          });
-
-          // Save officers as contacts
-          for (const officer of chCompany.officers) {
-            if (!officer.first_name && !officer.last_name) continue;
-            await admin.from('contacts').insert({
-              target_id: targetId, account_id: userDetails.account_id,
-              first_name: officer.first_name, last_name: officer.last_name,
-              role: officer.role, email: null, source: 'companies_house',
-            });
-          }
-
-          if (chCompany.domain) {
-            try {
-              const enrichResult = await runEnrichTarget({ target_id: targetId, user_details_id, silent: true });
-              await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
-              await new Promise(r => setTimeout(r, 1000));
-            } catch (err) {
-              console.error(`[target_finder_100] CH enrich error: ${err.message}`);
-            }
+      if (filtered.length > 0) {
+        const allScored = [];
+        for (let i = 0; i < filtered.length; i += CH_BATCH_SIZE) {
+          const batch = filtered.slice(i, i + CH_BATCH_SIZE);
+          console.log(`[target_finder_100] Step 1 scoring batch ${Math.floor(i / CH_BATCH_SIZE) + 1}`);
+          const scores = await scoreStructuredBatch(batch, fillTemplate, structuredScoreTemplate, buyerContext);
+          for (const item of scores) {
+            if (batch[item.index]) allScored.push({ company: batch[item.index], score: item.score, reason: item.reason });
           }
         }
-      }
 
-      const currentCount = await countApprovedLeads(itp.id);
-      if (currentCount >= targetCount) {
-        console.log('[target_finder_100] Target reached after CH phase');
-        return finalize(itp, user_details_id, targetCount);
+        for (const { company, score, reason } of allScored) {
+          if ((score ?? 0) < HIGH_SCORE_THRESHOLD) continue;
+          await createLeadFromCH(company, score, reason, itp, userDetails.account_id, user_details_id, campaign_id, dedupSets);
+        }
+
+        const count = await countApprovedLeads(itp.id);
+        console.log(`[target_finder_100] After Step 1: ${count}/${targetCount}`);
+        if (count >= targetCount) return finalize(itp, user_details_id, targetCount);
       }
+    } catch (err) {
+      console.error('[target_finder_100] Step 1 error:', err.message);
     }
-  } catch (err) {
-    console.error('[target_finder_100] CH phase error:', err.message);
   }
 
   // ================================================================
-  // PHASE 2: Google/Serper backfill
+  // STEP 2: Targeted Google Search (good quality, free)
   // ================================================================
-  console.log('[target_finder_100] === PHASE 2: Google/Serper backfill ===');
+  console.log('[target_finder_100] === STEP 2: Targeted Google Search ===');
 
-  const scorePromptBase = fillTemplate(scorePromptTemplate);
+  const scorePromptBase = fillTemplate(hybridScoreTemplate, { '{{buyer_context}}': buyerContext });
 
-  for (let iteration = 0; iteration < MAX_SERPER_ITERATIONS; iteration++) {
-    const currentCount = await countApprovedLeads(itp.id);
-    console.log(`[target_finder_100] Serper iteration ${iteration + 1}: ${currentCount}/${targetCount} approved`);
-    if (currentCount >= targetCount) break;
+  // Run pre-generated search profile queries first, then generate dynamically
+  const profileQueries = searchProfile.search_queries ?? [];
+  let serperIterations = 0;
+
+  async function runSerperQuery(query) {
+    serperIterations++;
+    const count = await countApprovedLeads(itp.id);
+    if (count >= targetCount) return false;
+
+    console.log(`[target_finder_100] Google query (${serperIterations}): ${query}`);
+
+    const serperRes = await fetch('https://google.serper.dev/search', {
+      method: 'POST',
+      headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: query, num: 20, ...(itp.location ? { location: itp.location } : {}), hl: 'en' }),
+    });
+    const serperData = await serperRes.json();
+    if (!serperRes.ok) { console.error('[target_finder_100] Serper error:', JSON.stringify(serperData)); return true; }
+
+    const organic = serperData.organic ?? [];
+    const newResults = [];
+
+    for (const result of organic) {
+      if (!result.link) continue;
+      let domain;
+      try { domain = new URL(result.link).hostname.replace(/^www\./, ''); } catch { continue; }
+      if (dedupSets.customerDomains.has(result.link.toLowerCase())) continue;
+      if (isDomainBlocked(domain)) continue;
+      if (dedupSets.existingDomains.has(domain)) continue;
+      newResults.push({ ...result, _domain: domain });
+    }
+
+    if (newResults.length === 0) return true;
+
+    // Cross-reference with CH for structured data
+    const hybridList = [];
+    for (const result of newResults) {
+      let chData = null;
+      const companyName = result.title?.replace(/\s*[-|–].*$/, '').trim();
+      if (companyName) {
+        try {
+          const chSearch = await searchCH({ companyName, size: 3 });
+          const match = (chSearch.items ?? []).find(item =>
+            item.company_name?.toUpperCase().includes(companyName.toUpperCase().slice(0, 20))
+          );
+          if (match) {
+            const profile = await getCompanyProfile(match.company_number);
+            if (profile) {
+              chData = {
+                companyNumber: match.company_number,
+                sicCodes: profile.sic_codes ?? [],
+                dateOfCreation: profile.date_of_creation,
+                location: [profile.registered_office_address?.locality, profile.registered_office_address?.region].filter(Boolean).join(', '),
+              };
+            }
+          }
+        } catch {} // CH cross-ref is best-effort
+      }
+      hybridList.push({ index: hybridList.length, title: result.title, link: result.link, snippet: result.snippet, domain: result._domain, chData });
+    }
+
+    const targetsList = hybridList.map((h, i) => {
+      let entry = `[${i}] Title: ${h.title ?? 'N/A'}\n    URL: ${h.link}\n    Snippet: ${h.snippet ?? ''}`;
+      if (h.chData) {
+        entry += `\n    [Companies House verified] SIC: ${h.chData.sicCodes.join(', ')} | Founded: ${h.chData.dateOfCreation ?? 'Unknown'} | Location: ${h.chData.location ?? 'Unknown'}`;
+      }
+      return entry;
+    }).join('\n\n');
+
+    const scorePrompt = scorePromptBase.replace('{{hybrid_companies}}', targetsList);
+    const scoreRes = await callClaude({ model: 'claude-sonnet-4-6', max_tokens: 1024, messages: [{ role: 'user', content: scorePrompt }] });
+
+    let scores = [];
+    try {
+      scores = JSON.parse(scoreRes.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, ''));
+    } catch { console.error('[target_finder_100] Failed to parse Google scores'); return true; }
+
+    for (const item of scores) {
+      const h = hybridList[item.index];
+      if (!h || (item.score ?? 0) < HIGH_SCORE_THRESHOLD) continue;
+
+      const { data: newTarget, error } = await admin.from('targets').insert({
+        domain: h.domain, title: h.title ?? null, link: h.link ?? null,
+        companies_house_number: h.chData?.companyNumber ?? null,
+      }).select('id').single();
+      if (error) continue;
+
+      dedupSets.existingDomains.add(h.domain);
+      if (h.chData?.companyNumber) dedupSets.existingCHNumbers.add(h.chData.companyNumber);
+
+      await admin.from('leads').insert({
+        target_id: newTarget.id, itp_id: itp.id, score: item.score, score_reason: item.reason ?? null, approved: true,
+      });
+
+      try {
+        const enrichResult = await runEnrichTarget({ target_id: newTarget.id, user_details_id, silent: true });
+        await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
+        await new Promise(r => setTimeout(r, 1000));
+      } catch (err) { console.error('[target_finder_100] Google enrich error:', err.message); }
+    }
+
+    return true;
+  }
+
+  // Run profile queries first
+  for (const query of profileQueries) {
+    const shouldContinue = await runSerperQuery(query);
+    if (!shouldContinue) break;
+  }
+
+  // Generate additional queries dynamically if still below target
+  let dynamicIterations = 0;
+  const maxDynamicIterations = MAX_SERPER_ITERATIONS - profileQueries.length;
+
+  while (dynamicIterations < maxDynamicIterations) {
+    const count = await countApprovedLeads(itp.id);
+    if (count >= targetCount) break;
+    dynamicIterations++;
 
     const { data: currentLeads } = await admin
       .from('leads')
-      .select('id, target_id, score, score_reason, approved, search_query_ids, targets(id, domain, title, link)')
+      .select('id, score, score_reason, targets(domain, title, link)')
       .eq('itp_id', itp.id);
-
-    let previousTargetsText = 'None yet.';
-    let previousQueriesText = 'None yet.';
 
     const { data: allPreviousQueries } = await admin
       .from('target_finder_google_search_prompts').select('query')
       .eq('itp', itp.id).order('created_at', { ascending: true });
 
-    if (allPreviousQueries?.length > 0) {
-      previousQueriesText = allPreviousQueries.map((q, i) => `${i + 1}. ${q.query}`).join('\n');
-    }
-    if (currentLeads?.length > 0) {
-      previousTargetsText = currentLeads.map(l =>
-        `- Title: ${l.targets?.title ?? 'N/A'} | Website: ${l.targets?.link ?? 'N/A'} | Score: ${l.score ?? 'N/A'} | Reason: ${l.score_reason ?? 'N/A'}`
-      ).join('\n');
-    }
+    const previousQueriesText = allPreviousQueries?.length > 0
+      ? allPreviousQueries.map((q, i) => `${i + 1}. ${q.query}`).join('\n')
+      : 'None yet.';
+    const previousTargetsText = currentLeads?.length > 0
+      ? currentLeads.map(l => `- Title: ${l.targets?.title ?? 'N/A'} | Website: ${l.targets?.link ?? 'N/A'} | Score: ${l.score ?? 'N/A'} | Reason: ${l.score_reason ?? 'N/A'}`).join('\n')
+      : 'None yet.';
 
     const searchPrompt = fillTemplate(searchPromptTemplate, {
       '{{previous_targets}}': previousTargetsText,
@@ -309,125 +451,71 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
     });
 
     const query = searchResponse.content[0].text.trim();
-    console.log('[target_finder_100] Serper query:', query);
+    await admin.from('target_finder_google_search_prompts').insert({ itp: itp.id, query });
 
-    const { data: insertedPrompt } = await admin
-      .from('target_finder_google_search_prompts').insert({ itp: itp.id, query }).select('id').single();
-    const searchPromptId = insertedPrompt?.id;
+    const shouldContinue = await runSerperQuery(query);
+    if (!shouldContinue) break;
+  }
 
-    const serperResponse = await fetch('https://google.serper.dev/search', {
-      method: 'POST',
-      headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q: query, num: 20, ...(itp.location ? { location: itp.location } : {}), hl: 'en' }),
-    });
-
-    const serperData = await serperResponse.json();
-    if (!serperResponse.ok) { console.error('[target_finder_100] Serper error:', JSON.stringify(serperData)); break; }
-
-    const organic = serperData.organic ?? [];
-    const newResults = [];
-
-    for (const result of organic) {
-      if (!result.link) continue;
-      let domain;
-      try { domain = new URL(result.link).hostname.replace(/^www\./, ''); } catch { continue; }
-      if (dedupSets.customerDomains.has(result.link.toLowerCase())) continue;
-      if (isDomainBlocked(domain)) continue;
-
-      if (dedupSets.existingDomains.has(domain)) {
-        const { data: existingTarget } = await admin.from('targets').select('id').eq('domain', domain).maybeSingle();
-        if (existingTarget) {
-          const { data: existingLead } = await admin.from('leads').select('id, search_query_ids')
-            .eq('target_id', existingTarget.id).eq('itp_id', itp.id).maybeSingle();
-          if (existingLead) {
-            await admin.from('leads').update({
-              search_query_ids: [...(existingLead.search_query_ids ?? []), { id: searchPromptId, position: result.position }]
-            }).eq('id', existingLead.id);
-          } else {
-            newResults.push({ ...result, _domain: domain, _existingTargetId: existingTarget.id });
-          }
-        }
-        continue;
-      }
-      newResults.push({ ...result, _domain: domain, _existingTargetId: null });
-    }
-
-    if (newResults.length > 0) {
-      const targetsList = newResults.map((r, i) =>
-        `[${i}] Title: ${r.title ?? 'N/A'}\nURL: ${r.link}\nSnippet: ${r.snippet ?? ''}`
-      ).join('\n\n');
-
-      const scoreResponse = await callClaude({
-        model: 'claude-sonnet-4-6', max_tokens: 1024,
-        messages: [{ role: 'user', content: scorePromptBase.replace('{{response_from_serper}}', targetsList) }],
-      });
-
-      let scores = [];
-      try {
-        scores = JSON.parse(scoreResponse.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, ''));
-      } catch { console.error('[target_finder_100] Failed to parse Serper scores'); }
-
-      for (const item of scores) {
-        const result = newResults[item.index];
-        if (!result) continue;
-
-        let targetId;
-        const isNewTarget = !result._existingTargetId;
-
-        if (result._existingTargetId) {
-          targetId = result._existingTargetId;
-        } else {
-          const { data: newTarget, error } = await admin.from('targets')
-            .insert({ domain: result._domain, title: result.title ?? null, link: result.link ?? null })
-            .select('id').single();
-          if (error) continue;
-          targetId = newTarget.id;
-          dedupSets.existingDomains.add(result._domain);
-        }
-
-        if ((item.score ?? 0) >= HIGH_SCORE_THRESHOLD) {
-          await admin.from('leads').insert({
-            target_id: targetId, itp_id: itp.id,
-            score: item.score, score_reason: item.reason ?? null, approved: true,
-            search_query_ids: [{ id: searchPromptId, position: result.position }],
-          });
-        }
-
-        if ((item.score ?? 0) >= HIGH_SCORE_THRESHOLD && isNewTarget) {
-          try {
-            const enrichResult = await runEnrichTarget({ target_id: targetId, user_details_id, silent: true });
-            await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
-            await new Promise(r => setTimeout(r, 1000));
-          } catch (err) {
-            console.error('[target_finder_100] Serper enrich error:', err.message);
-          }
-        }
-      }
-    }
+  {
+    const count = await countApprovedLeads(itp.id);
+    console.log(`[target_finder_100] After Step 2: ${count}/${targetCount}`);
+    if (count >= targetCount) return finalize(itp, user_details_id, targetCount);
   }
 
   // ================================================================
-  // PHASE 3: Apollo company search (optional)
+  // STEP 3: CH Broad Search (backfill)
+  // ================================================================
+  console.log('[target_finder_100] === STEP 3: CH Broad Search ===');
+
+  try {
+    const chResults = await searchCompaniesHouseForItp({
+      itp,
+      existingDomains: dedupSets.existingDomains,
+      existingCHNumbers: dedupSets.existingCHNumbers,
+      customerDomains: dedupSets.customerDomains,
+    });
+
+    const filtered = chResults.filter(c => {
+      const reason = shouldSkipCompany(c, searchProfile);
+      if (reason) console.log(`[target_finder_100] Pre-filter skip: ${c.companyName} — ${reason}`);
+      return !reason;
+    });
+    console.log(`[target_finder_100] Step 3: ${chResults.length} found, ${filtered.length} after pre-filter`);
+
+    if (filtered.length > 0) {
+      for (let i = 0; i < filtered.length; i += CH_BATCH_SIZE) {
+        const batch = filtered.slice(i, i + CH_BATCH_SIZE);
+        console.log(`[target_finder_100] Step 3 scoring batch ${Math.floor(i / CH_BATCH_SIZE) + 1}`);
+        const scores = await scoreStructuredBatch(batch, fillTemplate, structuredScoreTemplate, buyerContext);
+
+        for (const item of scores) {
+          const company = batch[item.index];
+          if (!company || (item.score ?? 0) < HIGH_SCORE_THRESHOLD) continue;
+          await createLeadFromCH(company, item.score, item.reason, itp, userDetails.account_id, user_details_id, campaign_id, dedupSets);
+        }
+
+        const count = await countApprovedLeads(itp.id);
+        if (count >= targetCount) break;
+      }
+    }
+  } catch (err) {
+    console.error('[target_finder_100] Step 3 error:', err.message);
+  }
+
+  // ================================================================
+  // STEP 4: Apollo Company Search (optional)
   // ================================================================
   if (APOLLO_COMPANY_SEARCH_ENABLED) {
-    const currentCount = await countApprovedLeads(itp.id);
-    if (currentCount < targetCount) {
-      console.log('[target_finder_100] === PHASE 3: Apollo company search ===');
+    const count = await countApprovedLeads(itp.id);
+    if (count < targetCount) {
+      console.log('[target_finder_100] === STEP 4: Apollo Company Search ===');
+
       try {
         const { searchCompaniesByName } = await import('../../../../config/apollo.js');
+        const terms = searchProfile.buyer_descriptions?.slice(0, 5) ?? [];
 
-        const apolloResponse = await callClaude({
-          model: 'claude-haiku-4-5-20251001', max_tokens: 256,
-          messages: [{
-            role: 'user',
-            content: `Given this ITP, suggest 3-5 short keyword searches to find matching companies.\n\nITP: ${itp.itp_summary}\nDemographics: ${itp.itp_demographic}\nLocation: ${itp.location ?? 'UK'}\n\nRespond with a JSON array of search strings.`,
-          }],
-        });
-
-        let searchTerms = [];
-        try { searchTerms = JSON.parse(apolloResponse.content[0].text.trim()); } catch {}
-
-        for (const term of searchTerms) {
+        for (const term of terms) {
           const orgs = await searchCompaniesByName(term, [itp.location ?? 'United Kingdom']);
           for (const org of orgs) {
             const domain = org.primary_domain;
@@ -440,36 +528,31 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
             dedupSets.existingDomains.add(domain);
 
             const targetsList = `[0] Title: ${org.name ?? 'N/A'}\nURL: https://${domain}\nSnippet: ${org.short_description ?? ''}`;
-            const scoreRes = await callClaude({
-              model: 'claude-sonnet-4-6', max_tokens: 256,
-              messages: [{ role: 'user', content: scorePromptBase.replace('{{response_from_serper}}', targetsList) }],
-            });
+            const sp = fillTemplate(hybridScoreTemplate, { '{{buyer_context}}': buyerContext }).replace('{{hybrid_companies}}', targetsList);
+            const sr = await callClaude({ model: 'claude-sonnet-4-6', max_tokens: 256, messages: [{ role: 'user', content: sp }] });
 
             let score = 0, reason = '';
             try {
-              const parsed = JSON.parse(scoreRes.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, ''));
-              score = parsed[0]?.score ?? 0;
-              reason = parsed[0]?.reason ?? '';
+              const parsed = JSON.parse(sr.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, ''));
+              score = parsed[0]?.score ?? 0; reason = parsed[0]?.reason ?? '';
             } catch {}
 
             if (score >= HIGH_SCORE_THRESHOLD) {
-              await admin.from('leads').insert({
-                target_id: newTarget.id, itp_id: itp.id, score, score_reason: reason, approved: true,
-              });
+              await admin.from('leads').insert({ target_id: newTarget.id, itp_id: itp.id, score, score_reason: reason, approved: true });
               try {
                 const enrichResult = await runEnrichTarget({ target_id: newTarget.id, user_details_id, silent: true });
                 await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
-                await new Promise(r => setTimeout(r, 1000));
               } catch (err) {
                 console.error('[target_finder_100] Apollo enrich error:', err.message);
               }
             }
           }
-          const count = await countApprovedLeads(itp.id);
-          if (count >= targetCount) break;
+
+          const c = await countApprovedLeads(itp.id);
+          if (c >= targetCount) break;
         }
       } catch (err) {
-        console.error('[target_finder_100] Apollo phase error:', err.message);
+        console.error('[target_finder_100] Step 4 error:', err.message);
       }
     }
   }
