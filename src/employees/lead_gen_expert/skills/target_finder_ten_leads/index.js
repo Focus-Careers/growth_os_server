@@ -137,7 +137,7 @@ export async function executeSkill({ user_details_id, itp_id }) {
   // PHASE 1: Companies House (primary source)
   // ================================================================
   console.log('[target_finder] === PHASE 1: Companies House ===');
-  await sendProgress(user_details_id, 'Belfort is searching Companies House...', 5);
+  await sendProgress(user_details_id, 'Belfort is searching Companies House...', 2);
 
   try {
     const chResults = await searchCompaniesHouseForItp({
@@ -145,6 +145,10 @@ export async function executeSkill({ user_details_id, itp_id }) {
       existingDomains: dedupSets.existingDomains,
       existingCHNumbers: dedupSets.existingCHNumbers,
       customerDomains: dedupSets.customerDomains,
+      onProgress: (processed, total) => {
+        const percent = 2 + Math.round((processed / total) * 28);
+        sendProgress(user_details_id, 'Belfort is searching Companies House...', percent);
+      },
     });
 
     if (chResults.length > 0) {
@@ -157,8 +161,8 @@ export async function executeSkill({ user_details_id, itp_id }) {
         const batch = chResults.slice(batchStart, batchStart + CH_BATCH_SIZE);
         const batchNum = Math.floor(batchStart / CH_BATCH_SIZE) + 1;
         console.log(`[target_finder] Scoring CH batch ${batchNum}: companies ${batchStart + 1}-${batchStart + batch.length} of ${chResults.length}`);
-        const scoringPercent = 15 + Math.round((batchNum / totalBatches) * 20);
-        await sendProgress(user_details_id, `Belfort is scoring companies...`, scoringPercent);
+        const scoringPercent = 30 + Math.round((batchNum / totalBatches) * 10);
+        await sendProgress(user_details_id, 'Belfort is scoring companies...', scoringPercent);
 
         const structuredList = batch.map((c, i) =>
           `[${i}] Company: "${c.companyName}" (${c.domain ?? 'no website'})\n` +

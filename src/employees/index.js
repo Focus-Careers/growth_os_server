@@ -19,10 +19,16 @@ import { executeSkill as emailCampaignManager_syncToSmartlead } from './email_ca
 import { broadcastSkillStatus } from '../intelligence/skill_status_broadcaster/index.js';
 import { getSupabaseAdmin } from '../config/supabase.js';
 
+// Skills that handle their own progress broadcasting — skip the initial persisted message
+const skillsWithProgress = new Set([
+  'lead_gen_expert/target_finder_ten_leads',
+  'lead_gen_expert/target_finder_100_leads',
+]);
+
 // Skill-specific status messages shown to the user while running
 // Shown in the chat feed (includes employee name)
 const skillChatMessages = {
-  'lead_gen_expert/target_finder_ten_leads': 'Belfort is searching the web for target companies...',
+  'lead_gen_expert/target_finder_ten_leads': 'Belfort is searching for target companies... 0%',
   'lead_gen_expert/target_finder_100_leads': 'Belfort is expanding the target search...',
   'lead_gen_expert/contact_finder': 'Belfort is finding contact details...',
   'lead_gen_expert/enrich_target': 'Belfort is enriching target data...',
@@ -88,6 +94,7 @@ export async function dispatchSkill(employee, skill, inputs) {
       status: 'running',
       message: chatMessage,
       sidebar_message: sidebarMessage,
+      persist: !skillsWithProgress.has(key),
     });
     // Track active skill in DB so we can detect incomplete runs on return
     await getSupabaseAdmin()

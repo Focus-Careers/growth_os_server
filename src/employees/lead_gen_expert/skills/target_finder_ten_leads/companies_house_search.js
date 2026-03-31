@@ -70,10 +70,10 @@ function describeSicCode(code) {
  * Search Companies House for companies matching an ITP.
  * Returns structured results ready for scoring.
  *
- * @param {{ itp: object, existingDomains: Set, existingCHNumbers: Set, customerDomains: Set }} opts
+ * @param {{ itp: object, existingDomains: Set, existingCHNumbers: Set, customerDomains: Set, onProgress?: (processed: number, total: number) => void }} opts
  * @returns {Promise<Array>} Array of company result objects
  */
-export async function searchCompaniesHouseForItp({ itp, existingDomains, existingCHNumbers, customerDomains }) {
+export async function searchCompaniesHouseForItp({ itp, existingDomains, existingCHNumbers, customerDomains, onProgress }) {
   const sicCodes = await mapItpToSicCodes(itp);
   if (sicCodes.length === 0) {
     console.log('[ch_search] No SIC codes mapped, skipping Companies House search');
@@ -92,7 +92,11 @@ export async function searchCompaniesHouseForItp({ itp, existingDomains, existin
 
   const results = [];
 
+  let processed = 0;
   for (const item of items) {
+    processed++;
+    if (onProgress) onProgress(processed, items.length);
+
     const companyNumber = item.company_number;
     if (!companyNumber) continue;
 
