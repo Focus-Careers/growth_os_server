@@ -12,6 +12,7 @@ import { executeSkill as leadGenExpert_contactFinder } from './lead_gen_expert/s
 import { executeSkill as leadGenExpert_enrichTarget } from './lead_gen_expert/skills/enrich_target/index.js';
 import { executeSkill as leadGenExpert_itpRefiner } from './lead_gen_expert/skills/itp_refiner/index.js';
 import { executeSkill as businessAnalyst_defineItp } from './business_analyst/skills/define_itp/index.js';
+import { executeSkill as businessAnalyst_analyseCustomers } from './business_analyst/skills/analyse_customers/index.js';
 import { executeSkill as emailCampaignManager_createNewSender } from './email_campaign_manager/skills/create_new_sender/index.js';
 import { executeSkill as emailCampaignManager_createCampaign } from './email_campaign_manager/skills/create_campaign/index.js';
 import { executeSkill as emailCampaignManager_launchCampaign } from './email_campaign_manager/skills/launch_campaign/index.js';
@@ -35,6 +36,7 @@ const skillChatMessages = {
   'lead_gen_expert/itp_refiner': 'Belfort is refining your ideal target profile...',
   'lead_gen_expert/analyse_website': 'Belfort is analysing the website...',
   'business_analyst/define_itp': 'Warren is building your ideal target profile...',
+  'business_analyst/analyse_customers': 'Warren is analysing your existing customers...',
   'email_campaign_manager/create_campaign': 'Draper is drafting your campaign...',
   'email_campaign_manager/create_new_sender': 'Draper is setting up your sender identity...',
   'email_campaign_manager/launch_campaign': 'Draper is launching your campaign...',
@@ -50,6 +52,7 @@ const skillSidebarMessages = {
   'lead_gen_expert/itp_refiner': 'Refining target profile...',
   'lead_gen_expert/analyse_website': 'Analysing website...',
   'business_analyst/define_itp': 'Building target profile...',
+  'business_analyst/analyse_customers': 'Analysing customers...',
   'email_campaign_manager/create_campaign': 'Drafting campaign...',
   'email_campaign_manager/create_new_sender': 'Setting up sender...',
   'email_campaign_manager/launch_campaign': 'Launching campaign...',
@@ -70,6 +73,7 @@ const skills = {
   },
   business_analyst: {
     define_itp: businessAnalyst_defineItp,
+    analyse_customers: businessAnalyst_analyseCustomers,
   },
   email_campaign_manager: {
     create_new_sender: emailCampaignManager_createNewSender,

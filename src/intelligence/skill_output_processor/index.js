@@ -49,6 +49,44 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
       break;
     }
 
+    case 'business_analyst/analyse_customers': {
+      if (output.skipped) {
+        // No customers or no ITP — skip straight to signed_up_first_message
+        console.log(`[skill_output] analyse_customers skipped (${output.reason}), queueing signed_up_first_message`);
+        const { data: ud } = await getSupabaseAdmin()
+          .from('user_details').select('queued_mobilisations').eq('id', user_details_id).single();
+        const queue = ud?.queued_mobilisations ?? [];
+        if (!queue.some(q => q.mobilisation === 'signed_up_first_message')) {
+          await getSupabaseAdmin().from('user_details').update({
+            queued_mobilisations: [...queue, { mobilisation: 'signed_up_first_message', queued_at: new Date().toISOString() }],
+          }).eq('id', user_details_id);
+        }
+      } else {
+        // Refined ITP — update the existing ITP record and show for review
+        const itpId = output.itp_id;
+        if (itpId) {
+          await getSupabaseAdmin().from('itp').update({
+            name: output.name ?? null,
+            itp_summary: output.itp_summary ?? null,
+            itp_demographic: output.demographics ?? null,
+            itp_pain_points: output.pain_points ?? null,
+            itp_buying_trigger: output.buying_trigger ?? null,
+            location: output.location ?? null,
+            sic_codes: null, // Clear cached SIC codes so they get regenerated
+          }).eq('id', itpId);
+        }
+        await sendAppMessage({
+          type: 'skill_output',
+          employee,
+          skill: skill_name,
+          user_details_id,
+          sidebar: 'define_itp',
+          output: { ...output, itp_id: itpId },
+        });
+      }
+      break;
+    }
+
     case 'lead_gen_expert/target_finder_ten_leads': {
       const highScoreCount = output.high_score_count ?? 0;
       const totalTargets = output.total_targets ?? 0;

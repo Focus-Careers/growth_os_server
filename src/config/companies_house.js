@@ -16,7 +16,22 @@ function delay(ms) {
  * Returns up to `size` results per page.
  * @param {{ sicCodes?: string[], location?: string, companyStatus?: string, startIndex?: number, size?: number }} opts
  */
-export async function searchCompanies({ sicCodes, location, companyStatus = 'active', startIndex = 0, size = 100 } = {}) {
+export async function searchCompanies({ sicCodes, location, companyName, companyStatus = 'active', startIndex = 0, size = 100 } = {}) {
+  // Use name search endpoint if searching by company name
+  if (companyName && !sicCodes?.length) {
+    const params = new URLSearchParams({ q: companyName, items_per_page: String(size) });
+    const url = `${CH_BASE_URL}/search/companies?${params}`;
+    console.log(`[companies_house] Name search: ${url}`);
+    try {
+      const res = await fetch(url, { headers: { Authorization: getAuthHeader() } });
+      if (!res.ok) { console.error(`[companies_house] Name search failed (${res.status})`); return { items: [], total_results: 0 }; }
+      const data = await res.json();
+      console.log(`[companies_house] Name search returned ${data.items?.length ?? 0} results`);
+      await delay(500);
+      return data;
+    } catch (err) { console.error('[companies_house] Name search error:', err.message); return { items: [], total_results: 0 }; }
+  }
+
   const params = new URLSearchParams();
   if (sicCodes?.length) params.set('sic_codes', sicCodes.join(','));
   if (location) params.set('location', location);
