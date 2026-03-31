@@ -84,14 +84,8 @@ export async function executeSkill({ user_details_id }) {
 
   await sendProgress('Warren is looking up your customers...', 5);
 
-  // Look up each sampled customer on Companies House
-  const customerProfiles = [];
-  for (let i = 0; i < sample.length; i++) {
-    const customer = sample[i];
+  async function processCustomer(customer) {
     const name = customer.organisation_name;
-    const percent = 5 + Math.round((i / sample.length) * 80);
-    await sendProgress(`Warren is looking up your customers...`, percent);
-
     try {
       let items = [];
 
@@ -119,7 +113,7 @@ export async function executeSkill({ user_details_id }) {
 
       if (items.length === 0) {
         console.log(`[analyse_customers] ${name} → not found on CH`);
-        continue;
+        return null;
       }
 
       // Use Claude Haiku to pick the best CH match
@@ -141,7 +135,7 @@ export async function executeSkill({ user_details_id }) {
         const pick = matchRes.content[0].text.trim().toLowerCase();
         if (pick === 'none') {
           console.log(`[analyse_customers] ${name} → Claude found no good CH match`);
-          continue;
+          return null;
         }
         const idx = parseInt(pick);
         if (!isNaN(idx) && items[idx]) bestItem = items[idx];
@@ -149,18 +143,30 @@ export async function executeSkill({ user_details_id }) {
 
       const profile = await getCompanyProfile(bestItem.company_number);
       if (profile) {
-        customerProfiles.push({
+        console.log(`[analyse_customers] ${name} → CH ${bestItem.company_number} | SIC: ${(profile.sic_codes ?? []).join(', ')}`);
+        return {
           name,
           company_number: bestItem.company_number,
           sic_codes: profile.sic_codes ?? [],
           date_of_creation: profile.date_of_creation ?? null,
           company_type: profile.type ?? null,
-        });
-        console.log(`[analyse_customers] ${name} → CH ${bestItem.company_number} | SIC: ${(profile.sic_codes ?? []).join(', ')}`);
+        };
       }
     } catch (err) {
       console.error(`[analyse_customers] Error looking up ${name}:`, err.message);
     }
+    return null;
+  }
+
+  // Process in parallel chunks of 10
+  const CONCURRENCY = 10;
+  const customerProfiles = [];
+  for (let i = 0; i < sample.length; i += CONCURRENCY) {
+    const chunk = sample.slice(i, i + CONCURRENCY);
+    const percent = 5 + Math.round((i / sample.length) * 80);
+    await sendProgress('Warren is looking up your customers...', percent);
+    const results = await Promise.all(chunk.map(processCustomer));
+    customerProfiles.push(...results.filter(Boolean));
   }
 
   if (customerProfiles.length === 0) {
