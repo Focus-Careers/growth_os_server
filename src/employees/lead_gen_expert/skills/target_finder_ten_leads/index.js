@@ -7,6 +7,7 @@ import { executeSkill as runEnrichTarget } from '../enrich_target/index.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 import { searchCompaniesHouseForItp } from './companies_house_search.js';
 import { isDomainBlocked } from './domain_resolver.js';
+import { broadcastSkillStatus } from '../../../../intelligence/skill_status_broadcaster/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HIGH_SCORE_THRESHOLD = 70;
@@ -61,6 +62,20 @@ async function buildDedupSets(accountId) {
   );
 
   return { existingDomains, existingCHNumbers, customerDomains };
+}
+
+function progressMessage(text, percent) {
+  return `${text} ${percent}%`;
+}
+
+async function sendProgress(user_details_id, text, percent) {
+  await broadcastSkillStatus(user_details_id, {
+    employee: 'lead_gen_expert',
+    skill: 'target_finder_ten_leads',
+    status: 'running',
+    message: progressMessage(text, percent),
+    persist: false,
+  });
 }
 
 export async function executeSkill({ user_details_id, itp_id }) {
@@ -122,6 +137,7 @@ export async function executeSkill({ user_details_id, itp_id }) {
   // PHASE 1: Companies House (primary source)
   // ================================================================
   console.log('[target_finder] === PHASE 1: Companies House ===');
+  await sendProgress(user_details_id, 'Belfort is searching Companies House...', 5);
 
   try {
     const chResults = await searchCompaniesHouseForItp({
@@ -136,9 +152,13 @@ export async function executeSkill({ user_details_id, itp_id }) {
       const CH_BATCH_SIZE = 20;
       const allScored = []; // { chCompany, score, reason }
 
+      const totalBatches = Math.ceil(chResults.length / CH_BATCH_SIZE);
       for (let batchStart = 0; batchStart < chResults.length; batchStart += CH_BATCH_SIZE) {
         const batch = chResults.slice(batchStart, batchStart + CH_BATCH_SIZE);
-        console.log(`[target_finder] Scoring CH batch ${Math.floor(batchStart / CH_BATCH_SIZE) + 1}: companies ${batchStart + 1}-${batchStart + batch.length} of ${chResults.length}`);
+        const batchNum = Math.floor(batchStart / CH_BATCH_SIZE) + 1;
+        console.log(`[target_finder] Scoring CH batch ${batchNum}: companies ${batchStart + 1}-${batchStart + batch.length} of ${chResults.length}`);
+        const scoringPercent = 15 + Math.round((batchNum / totalBatches) * 20);
+        await sendProgress(user_details_id, `Belfort is scoring companies...`, scoringPercent);
 
         const structuredList = batch.map((c, i) =>
           `[${i}] Company: "${c.companyName}" (${c.domain ?? 'no website'})\n` +
@@ -174,6 +194,7 @@ export async function executeSkill({ user_details_id, itp_id }) {
         }
       }
 
+      const highScored = allScored.filter(s => (s.score ?? 0) >= HIGH_SCORE_THRESHOLD);
       let chLeadsCreated = 0;
       for (const { chCompany, score, reason } of allScored) {
         // Stop once we've hit the target — don't create more leads than needed
@@ -242,6 +263,9 @@ export async function executeSkill({ user_details_id, itp_id }) {
 
         // Run enrichment (scrape + Apollo reveal for officers' emails)
         if (chCompany.domain) {
+          const enrichTotal = Math.min(highScored.length, dynamicTarget - initialHighScoreCount);
+          const enrichPercent = 40 + Math.round((chLeadsCreated / Math.max(enrichTotal, 1)) * 35);
+          await sendProgress(user_details_id, `Belfort is enriching lead data...`, enrichPercent);
           try {
             await runEnrichTarget({ target_id: targetId, user_details_id, silent: true });
             await new Promise(r => setTimeout(r, 1000));
@@ -268,6 +292,7 @@ export async function executeSkill({ user_details_id, itp_id }) {
   // PHASE 2: Google/Serper backfill
   // ================================================================
   console.log('[target_finder] === PHASE 2: Google/Serper backfill ===');
+  await sendProgress(user_details_id, 'Belfort is searching Google for more leads...', 80);
 
   const scorePromptBase = fillTemplate(scorePromptTemplate);
 
@@ -278,6 +303,8 @@ export async function executeSkill({ user_details_id, itp_id }) {
       console.log('[target_finder] Target reached, stopping Serper backfill.');
       break;
     }
+    const serperPercent = 80 + Math.min(Math.round((iteration / MAX_SERPER_ITERATIONS) * 15), 14);
+    await sendProgress(user_details_id, `Belfort is searching Google for more leads...`, serperPercent);
 
     // Build context for search query generation
     const { data: currentLeads } = await admin
@@ -521,6 +548,7 @@ export async function executeSkill({ user_details_id, itp_id }) {
 }
 
 async function finalize(itp, user_details_id) {
+  await sendProgress(user_details_id, 'Belfort is finalising results...', 95);
   const { data: finalLeads } = await getSupabaseAdmin()
     .from('leads')
     .select('id, score, rejected, target_id, targets(id, title, link)')
