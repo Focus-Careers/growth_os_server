@@ -8,11 +8,15 @@ import { processSkillOutput } from '../../../../intelligence/skill_output_proces
 import { searchCompaniesHouseForItp } from './companies_house_search.js';
 import { isDomainBlocked } from './domain_resolver.js';
 import { broadcastSkillStatus } from '../../../../intelligence/skill_status_broadcaster/index.js';
+import { buildSearchProfile } from './build_search_profile.js';
+import { shouldSkipCompany } from './company_filter.js';
+import { searchCompanies as searchCH, getCompanyProfile } from '../../../../config/companies_house.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HIGH_SCORE_THRESHOLD = 70;
 const TARGET_HIGH_SCORE_COUNT = 10;
 const MAX_SERPER_ITERATIONS = 20;
+const CH_BATCH_SIZE = 20;
 const APOLLO_COMPANY_SEARCH_ENABLED = process.env.APOLLO_COMPANY_SEARCH_ENABLED === 'true';
 
 async function callClaude(params, retries = 3) {
@@ -21,47 +25,29 @@ async function callClaude(params, retries = 3) {
       return await getAnthropic().messages.create(params);
     } catch (err) {
       if (err?.status === 429 && attempt < retries - 1) {
-        const wait = 60000;
-        console.log(`[target_finder] Rate limited, waiting ${wait / 1000}s before retry...`);
-        await new Promise(r => setTimeout(r, wait));
-      } else {
-        throw err;
-      }
+        console.log(`[target_finder] Rate limited, waiting 60s...`);
+        await new Promise(r => setTimeout(r, 60000));
+      } else throw err;
     }
   }
 }
 
-/**
- * Count current high-score non-rejected leads for an ITP.
- */
 async function countHighScoreLeads(itpId) {
   const { data } = await getSupabaseAdmin()
-    .from('leads')
-    .select('id, score, rejected')
-    .eq('itp_id', itpId);
+    .from('leads').select('id, score, rejected').eq('itp_id', itpId);
   return (data ?? []).filter(l => (l.score ?? 0) >= HIGH_SCORE_THRESHOLD && !l.rejected).length;
 }
 
-/**
- * Build the set of existing domains, CH numbers, and customer domains for dedup.
- */
 async function buildDedupSets(accountId) {
   const [targetsRes, customersRes] = await Promise.all([
     getSupabaseAdmin().from('targets').select('domain, companies_house_number'),
     getSupabaseAdmin().from('customers').select('organisation_website').eq('account_id', accountId),
   ]);
-
-  const existingDomains = new Set(
-    (targetsRes.data ?? []).map(t => t.domain).filter(Boolean)
-  );
-  const existingCHNumbers = new Set(
-    (targetsRes.data ?? []).map(t => t.companies_house_number).filter(Boolean)
-  );
-  const customerDomains = new Set(
-    (customersRes.data ?? []).map(c => c.organisation_website?.toLowerCase()).filter(Boolean)
-  );
-
-  return { existingDomains, existingCHNumbers, customerDomains };
+  return {
+    existingDomains: new Set((targetsRes.data ?? []).map(t => t.domain).filter(Boolean)),
+    existingCHNumbers: new Set((targetsRes.data ?? []).map(t => t.companies_house_number).filter(Boolean)),
+    customerDomains: new Set((customersRes.data ?? []).map(c => c.organisation_website?.toLowerCase()).filter(Boolean)),
+  };
 }
 
 function progressMessage(text, percent) {
@@ -70,22 +56,109 @@ function progressMessage(text, percent) {
 
 async function sendProgress(user_details_id, text, percent) {
   await broadcastSkillStatus(user_details_id, {
-    employee: 'lead_gen_expert',
-    skill: 'target_finder_ten_leads',
-    status: 'running',
-    message: progressMessage(text, percent),
-    persist: false,
+    employee: 'lead_gen_expert', skill: 'target_finder_ten_leads',
+    status: 'running', message: progressMessage(text, percent), persist: false,
   });
 }
+
+/**
+ * Build buyer context string for scoring prompts from the search profile.
+ */
+function buildBuyerContext(searchProfile) {
+  const parts = [];
+  if (searchProfile.buyer_descriptions?.length) {
+    parts.push(`The types of businesses that typically buy from this company include: ${searchProfile.buyer_descriptions.join(', ')}.`);
+  }
+  if (searchProfile.customer_sic_codes?.length) {
+    parts.push(`Existing customers are commonly registered under SIC codes: ${searchProfile.customer_sic_codes.join(', ')}.`);
+  }
+  return parts.length > 0 ? parts.join(' ') : '';
+}
+
+/**
+ * Score a batch of structured companies against the ITP.
+ */
+async function scoreStructuredBatch(companies, fillTemplate, structuredScoreTemplate, buyerContext) {
+  const structuredList = companies.map((c, i) =>
+    `[${i}] Company: "${c.companyName}" (${c.domain ?? 'no website'})\n` +
+    `    Industry (SIC): ${c.sicDescription}\n` +
+    `    Location: ${c.location ?? 'Unknown'}\n` +
+    `    Founded: ${c.dateOfCreation ?? 'Unknown'}\n` +
+    `    Officers: ${c.officers?.map(o => `${o.first_name ?? ''} ${o.last_name ?? ''} (${o.role ?? 'unknown role'})`).join(', ') || 'None listed'}\n` +
+    `    Company Number: ${c.companyNumber}`
+  ).join('\n\n');
+
+  const scorePrompt = fillTemplate(structuredScoreTemplate, {
+    '{{structured_companies}}': structuredList,
+    '{{buyer_context}}': buyerContext,
+  });
+
+  const scoreResponse = await callClaude({
+    model: 'claude-sonnet-4-6', max_tokens: 4096,
+    messages: [{ role: 'user', content: scorePrompt }],
+  });
+
+  try {
+    const raw = scoreResponse.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+    return JSON.parse(raw);
+  } catch {
+    console.error('[target_finder] Failed to parse scores');
+    return [];
+  }
+}
+
+/**
+ * Create a target + lead + officers from a scored CH company, then enrich.
+ */
+async function createLeadFromCH(chCompany, score, reason, itp, accountId, user_details_id, dedupSets) {
+  const admin = getSupabaseAdmin();
+
+  const { data: newTarget, error } = await admin.from('targets').insert({
+    domain: chCompany.domain, title: chCompany.companyName, link: chCompany.link,
+    companies_house_number: chCompany.companyNumber,
+    company_location: chCompany.location, industry: chCompany.sicDescription,
+  }).select('id').single();
+
+  if (error) { console.error('[target_finder] Target insert error:', error); return; }
+
+  const targetId = newTarget.id;
+  if (chCompany.domain) dedupSets.existingDomains.add(chCompany.domain);
+  if (chCompany.companyNumber) dedupSets.existingCHNumbers.add(chCompany.companyNumber);
+
+  await admin.from('leads').insert({
+    target_id: targetId, itp_id: itp.id, score, score_reason: reason ?? null,
+  });
+
+  // Save officers as contacts
+  for (const officer of (chCompany.officers ?? [])) {
+    if (!officer.first_name && !officer.last_name) continue;
+    await admin.from('contacts').insert({
+      target_id: targetId, account_id: accountId,
+      first_name: officer.first_name, last_name: officer.last_name,
+      role: officer.role, email: null, source: 'companies_house',
+    });
+  }
+
+  // Enrich
+  if (chCompany.domain) {
+    try {
+      await runEnrichTarget({ target_id: targetId, user_details_id, silent: true });
+      await new Promise(r => setTimeout(r, 1000));
+    } catch (err) {
+      console.error(`[target_finder] Enrich error for ${chCompany.companyName}:`, err.message);
+    }
+  }
+}
+
+// ====================================================================
+// MAIN SKILL
+// ====================================================================
 
 export async function executeSkill({ user_details_id, itp_id }) {
   const admin = getSupabaseAdmin();
 
   const { data: userDetails } = await admin
-    .from('user_details')
-    .select('account_id')
-    .eq('id', user_details_id)
-    .single();
+    .from('user_details').select('account_id').eq('id', user_details_id).single();
 
   // Load ITP
   let itpQuery = admin.from('itp').select('*').eq('account_id', userDetails.account_id);
@@ -95,22 +168,37 @@ export async function executeSkill({ user_details_id, itp_id }) {
 
   if (!itp) throw new Error('No ITP found for account');
 
-  // Calculate dynamic target
   const initialHighScoreCount = await countHighScoreLeads(itp.id);
   const dynamicTarget = initialHighScoreCount + TARGET_HIGH_SCORE_COUNT;
-  console.log(`[target_finder] Starting with ${initialHighScoreCount} existing high-score leads, aiming for ${dynamicTarget}`);
+  console.log(`[target_finder] Starting with ${initialHighScoreCount} existing, aiming for ${dynamicTarget}`);
 
-  // Load account info
+  // Load account
   const { data: account } = await admin
-    .from('account')
-    .select('organisation_name, organisation_website, description, problem_solved')
-    .eq('id', itp.account_id)
-    .single();
+    .from('account').select('organisation_name, organisation_website, description, problem_solved')
+    .eq('id', itp.account_id).single();
+
+  // Load customer analysis (if customers exist)
+  const { data: customers } = await admin
+    .from('customers').select('organisation_name, organisation_website')
+    .eq('account_id', userDetails.account_id);
+
+  let customerAnalysis = null;
+  if (customers?.length > 0) {
+    // Extract SIC codes from search profile if it was built during customer analysis
+    // The analyse_customers skill would have refined the ITP already
+    customerAnalysis = { customerSicCodes: [], customerLocations: [] };
+    // Customer SIC patterns come from the search profile (built from customer analysis)
+  }
+
+  // ── Build Search Profile ───────────────────────────────────────────
+  await sendProgress(user_details_id, 'Belfort is building search profile...', 2);
+  const searchProfile = await buildSearchProfile(itp, account, customerAnalysis);
+  const buyerContext = buildBuyerContext(searchProfile);
 
   // Load prompt templates
-  const searchPromptTemplate = await readFile(join(__dirname, 'prompt_generate_google_search.md'), 'utf-8');
-  const scorePromptTemplate = await readFile(join(__dirname, 'prompt_generate_company_score.md'), 'utf-8');
   const structuredScoreTemplate = await readFile(join(__dirname, 'prompt_score_structured.md'), 'utf-8');
+  const hybridScoreTemplate = await readFile(join(__dirname, 'prompt_score_hybrid.md'), 'utf-8');
+  const searchPromptTemplate = await readFile(join(__dirname, 'prompt_generate_google_search.md'), 'utf-8');
 
   const accountPlaceholders = {
     '{{account_organisation_name}}': account?.organisation_name ?? '',
@@ -125,19 +213,198 @@ export async function executeSkill({ user_details_id, itp_id }) {
 
   function fillTemplate(template, extra = {}) {
     return Object.entries({ ...accountPlaceholders, ...extra }).reduce(
-      (str, [key, val]) => str.replaceAll(key, val),
-      template
+      (str, [key, val]) => str.replaceAll(key, val), template
     );
   }
 
-  // Build dedup sets
   const dedupSets = await buildDedupSets(userDetails.account_id);
 
   // ================================================================
-  // PHASE 1: Companies House (primary source)
+  // STEP 1: Customer Lookalike Search (highest quality)
   // ================================================================
-  console.log('[target_finder] === PHASE 1: Companies House ===');
-  await sendProgress(user_details_id, 'Belfort is searching Companies House...', 2);
+  if (searchProfile.customer_sic_codes?.length > 0) {
+    console.log('[target_finder] === STEP 1: Customer Lookalike ===');
+    await sendProgress(user_details_id, 'Belfort is searching for companies matching your customers...', 5);
+
+    try {
+      // Search CH with customer SIC codes (not the broad approved codes)
+      const chResults = await searchCompaniesHouseForItp({
+        itp: { ...itp, sic_codes: searchProfile.customer_sic_codes },
+        existingDomains: dedupSets.existingDomains,
+        existingCHNumbers: dedupSets.existingCHNumbers,
+        customerDomains: dedupSets.customerDomains,
+        onProgress: (processed, total) => {
+          const percent = 5 + Math.round((processed / total) * 25);
+          sendProgress(user_details_id, 'Belfort is searching for companies matching your customers...', percent);
+        },
+      });
+
+      // Pre-filter
+      const filtered = chResults.filter(c => !shouldSkipCompany(c, searchProfile));
+      console.log(`[target_finder] Step 1: ${chResults.length} found, ${filtered.length} after pre-filter`);
+
+      if (filtered.length > 0) {
+        // Score in batches
+        const allScored = [];
+        for (let i = 0; i < filtered.length; i += CH_BATCH_SIZE) {
+          const batch = filtered.slice(i, i + CH_BATCH_SIZE);
+          await sendProgress(user_details_id, 'Belfort is scoring companies...', 30 + Math.round((i / filtered.length) * 8));
+          const scores = await scoreStructuredBatch(batch, fillTemplate, structuredScoreTemplate, buyerContext);
+          for (const item of scores) {
+            if (batch[item.index]) allScored.push({ company: batch[item.index], score: item.score, reason: item.reason });
+          }
+        }
+
+        // Create leads for high scorers (up to target)
+        let created = 0;
+        for (const { company, score, reason } of allScored) {
+          if (initialHighScoreCount + created >= dynamicTarget) break;
+          if ((score ?? 0) < HIGH_SCORE_THRESHOLD) continue;
+          await createLeadFromCH(company, score, reason, itp, userDetails.account_id, user_details_id, dedupSets);
+          created++;
+          await sendProgress(user_details_id, 'Belfort is enriching lead data...', 38 + Math.round((created / TARGET_HIGH_SCORE_COUNT) * 2));
+        }
+
+        const count = await countHighScoreLeads(itp.id);
+        console.log(`[target_finder] After Step 1: ${count}/${dynamicTarget}`);
+        if (count >= dynamicTarget) return finalize(itp, user_details_id);
+      }
+    } catch (err) {
+      console.error('[target_finder] Step 1 error:', err.message);
+    }
+  }
+
+  // ================================================================
+  // STEP 2: Targeted Google Search (good quality, free)
+  // ================================================================
+  console.log('[target_finder] === STEP 2: Targeted Google Search ===');
+  await sendProgress(user_details_id, 'Belfort is searching Google for matches...', 42);
+
+  const queries = searchProfile.search_queries ?? [];
+  const scorePromptBase = fillTemplate(hybridScoreTemplate, { '{{buyer_context}}': buyerContext });
+
+  for (let qi = 0; qi < Math.min(queries.length, MAX_SERPER_ITERATIONS); qi++) {
+    const count = await countHighScoreLeads(itp.id);
+    if (count >= dynamicTarget) break;
+
+    const query = queries[qi];
+    console.log(`[target_finder] Google query ${qi + 1}/${queries.length}: ${query}`);
+    const percent = 42 + Math.round((qi / queries.length) * 25);
+    await sendProgress(user_details_id, 'Belfort is searching Google for matches...', percent);
+
+    try {
+      const serperRes = await fetch('https://google.serper.dev/search', {
+        method: 'POST',
+        headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ q: query, num: 10, ...(itp.location ? { location: itp.location } : {}), hl: 'en' }),
+      });
+      const serperData = await serperRes.json();
+      if (!serperRes.ok) { console.error('[target_finder] Serper error:', JSON.stringify(serperData)); continue; }
+
+      const organic = serperData.organic ?? [];
+      const newResults = [];
+
+      for (const result of organic) {
+        if (!result.link) continue;
+        let domain;
+        try { domain = new URL(result.link).hostname.replace(/^www\./, ''); } catch { continue; }
+        if (dedupSets.customerDomains.has(result.link.toLowerCase())) continue;
+        if (isDomainBlocked(domain)) continue;
+        if (dedupSets.existingDomains.has(domain)) continue;
+        newResults.push({ ...result, _domain: domain });
+      }
+
+      if (newResults.length === 0) continue;
+
+      // Cross-reference with CH for structured data
+      const hybridList = [];
+      for (const result of newResults) {
+        let chData = null;
+        // Try to find on CH by company name (from page title)
+        const companyName = result.title?.replace(/\s*[-|–].*$/, '').trim();
+        if (companyName) {
+          try {
+            const chSearch = await searchCH({ companyName, size: 3 });
+            const match = (chSearch.items ?? []).find(item => {
+              // Simple match: domain or name similarity
+              return item.company_name?.toUpperCase().includes(companyName.toUpperCase().slice(0, 20));
+            });
+            if (match) {
+              const profile = await getCompanyProfile(match.company_number);
+              if (profile) {
+                chData = {
+                  companyNumber: match.company_number,
+                  sicCodes: profile.sic_codes ?? [],
+                  dateOfCreation: profile.date_of_creation,
+                  location: [profile.registered_office_address?.locality, profile.registered_office_address?.region].filter(Boolean).join(', '),
+                };
+              }
+            }
+          } catch {} // CH cross-ref is best-effort
+        }
+
+        hybridList.push({
+          index: hybridList.length,
+          title: result.title, link: result.link, snippet: result.snippet,
+          domain: result._domain, chData,
+        });
+      }
+
+      // Score hybrid results
+      const targetsList = hybridList.map((h, i) => {
+        let entry = `[${i}] Title: ${h.title ?? 'N/A'}\n    URL: ${h.link}\n    Snippet: ${h.snippet ?? ''}`;
+        if (h.chData) {
+          entry += `\n    [Companies House verified] SIC: ${h.chData.sicCodes.join(', ')} | Founded: ${h.chData.dateOfCreation ?? 'Unknown'} | Location: ${h.chData.location ?? 'Unknown'}`;
+        }
+        return entry;
+      }).join('\n\n');
+
+      const scorePrompt = scorePromptBase.replace('{{hybrid_companies}}', targetsList);
+      const scoreRes = await callClaude({ model: 'claude-sonnet-4-6', max_tokens: 1024, messages: [{ role: 'user', content: scorePrompt }] });
+
+      let scores = [];
+      try {
+        scores = JSON.parse(scoreRes.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, ''));
+      } catch { console.error('[target_finder] Failed to parse Google scores'); continue; }
+
+      for (const item of scores) {
+        const h = hybridList[item.index];
+        if (!h || (item.score ?? 0) < HIGH_SCORE_THRESHOLD) continue;
+
+        const { data: newTarget, error } = await admin.from('targets').insert({
+          domain: h.domain, title: h.title ?? null, link: h.link ?? null,
+          companies_house_number: h.chData?.companyNumber ?? null,
+        }).select('id').single();
+        if (error) continue;
+
+        dedupSets.existingDomains.add(h.domain);
+        if (h.chData?.companyNumber) dedupSets.existingCHNumbers.add(h.chData.companyNumber);
+
+        await admin.from('leads').insert({
+          target_id: newTarget.id, itp_id: itp.id, score: item.score, score_reason: item.reason,
+        });
+
+        try {
+          await runEnrichTarget({ target_id: newTarget.id, user_details_id, silent: true });
+          await new Promise(r => setTimeout(r, 1000));
+        } catch (err) { console.error('[target_finder] Google enrich error:', err.message); }
+      }
+    } catch (err) {
+      console.error('[target_finder] Step 2 query error:', err.message);
+    }
+  }
+
+  {
+    const count = await countHighScoreLeads(itp.id);
+    console.log(`[target_finder] After Step 2: ${count}/${dynamicTarget}`);
+    if (count >= dynamicTarget) return finalize(itp, user_details_id);
+  }
+
+  // ================================================================
+  // STEP 3: CH Broad Search (backfill)
+  // ================================================================
+  console.log('[target_finder] === STEP 3: CH Broad Search ===');
+  await sendProgress(user_details_id, 'Belfort is searching Companies House...', 70);
 
   try {
     const chResults = await searchCompaniesHouseForItp({
@@ -146,404 +413,88 @@ export async function executeSkill({ user_details_id, itp_id }) {
       existingCHNumbers: dedupSets.existingCHNumbers,
       customerDomains: dedupSets.customerDomains,
       onProgress: (processed, total) => {
-        const percent = 2 + Math.round((processed / total) * 28);
+        const percent = 70 + Math.round((processed / total) * 15);
         sendProgress(user_details_id, 'Belfort is searching Companies House...', percent);
       },
     });
 
-    if (chResults.length > 0) {
-      // Score CH results in batches of 20 to avoid token limit truncation
-      const CH_BATCH_SIZE = 20;
-      const allScored = []; // { chCompany, score, reason }
+    // Aggressive pre-filtering
+    const filtered = chResults.filter(c => {
+      const reason = shouldSkipCompany(c, searchProfile);
+      if (reason) console.log(`[target_finder] Pre-filter skip: ${c.companyName} — ${reason}`);
+      return !reason;
+    });
+    console.log(`[target_finder] Step 3: ${chResults.length} found, ${filtered.length} after pre-filter`);
 
-      const totalBatches = Math.ceil(chResults.length / CH_BATCH_SIZE);
-      for (let batchStart = 0; batchStart < chResults.length; batchStart += CH_BATCH_SIZE) {
-        const batch = chResults.slice(batchStart, batchStart + CH_BATCH_SIZE);
-        const batchNum = Math.floor(batchStart / CH_BATCH_SIZE) + 1;
-        console.log(`[target_finder] Scoring CH batch ${batchNum}: companies ${batchStart + 1}-${batchStart + batch.length} of ${chResults.length}`);
-        const scoringPercent = 30 + Math.round((batchNum / totalBatches) * 10);
-        await sendProgress(user_details_id, 'Belfort is scoring companies...', scoringPercent);
-
-        const structuredList = batch.map((c, i) =>
-          `[${i}] Company: "${c.companyName}" (${c.domain ?? 'no website'})\n` +
-          `    Industry (SIC): ${c.sicDescription}\n` +
-          `    Location: ${c.location ?? 'Unknown'}\n` +
-          `    Founded: ${c.dateOfCreation ?? 'Unknown'}\n` +
-          `    Officers: ${c.officers.map(o => `${o.first_name ?? ''} ${o.last_name ?? ''} (${o.role ?? 'unknown role'})`).join(', ') || 'None listed'}\n` +
-          `    Company Number: ${c.companyNumber}`
-        ).join('\n\n');
-
-        const scorePrompt = fillTemplate(structuredScoreTemplate, {
-          '{{structured_companies}}': structuredList,
-        });
-
-        const scoreResponse = await callClaude({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 4096,
-          messages: [{ role: 'user', content: scorePrompt }],
-        });
-
-        let scores = [];
-        try {
-          const raw = scoreResponse.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-          scores = JSON.parse(raw);
-        } catch (e) {
-          console.error(`[target_finder] Failed to parse CH batch scores:`, scoreResponse.content[0].text.slice(0, 200));
-          continue;
-        }
+    if (filtered.length > 0) {
+      let created = 0;
+      for (let i = 0; i < filtered.length; i += CH_BATCH_SIZE) {
+        const batch = filtered.slice(i, i + CH_BATCH_SIZE);
+        await sendProgress(user_details_id, 'Belfort is scoring companies...', 85 + Math.round((i / filtered.length) * 5));
+        const scores = await scoreStructuredBatch(batch, fillTemplate, structuredScoreTemplate, buyerContext);
 
         for (const item of scores) {
-          const chCompany = batch[item.index];
-          if (chCompany) allScored.push({ chCompany, score: item.score, reason: item.reason });
-        }
-      }
-
-      const highScored = allScored.filter(s => (s.score ?? 0) >= HIGH_SCORE_THRESHOLD);
-      let chLeadsCreated = 0;
-      for (const { chCompany, score, reason } of allScored) {
-        // Stop once we've hit the target — don't create more leads than needed
-        if (initialHighScoreCount + chLeadsCreated >= dynamicTarget) {
-          console.log(`[target_finder] CH phase: reached ${dynamicTarget} leads, stopping early`);
-          break;
+          if (initialHighScoreCount + created >= dynamicTarget - initialHighScoreCount) break;
+          const company = batch[item.index];
+          if (!company || (item.score ?? 0) < HIGH_SCORE_THRESHOLD) continue;
+          await createLeadFromCH(company, item.score, item.reason, itp, userDetails.account_id, user_details_id, dedupSets);
+          created++;
         }
 
-        const item = { score, reason };
-        if (!chCompany) continue;
-
-        // Skip low-score companies (don't even create the target)
-        if ((item.score ?? 0) < HIGH_SCORE_THRESHOLD) continue;
-
-        console.log(`[target_finder] CH scored: ${chCompany.companyName} → ${item.score} (${item.reason})`);
-
-        // Create target
-        const targetInsert = {
-          domain: chCompany.domain,
-          title: chCompany.companyName,
-          link: chCompany.link,
-          companies_house_number: chCompany.companyNumber,
-          company_location: chCompany.location,
-          industry: chCompany.sicDescription,
-        };
-
-        const { data: newTarget, error: insertError } = await admin
-          .from('targets')
-          .insert(targetInsert)
-          .select('id')
-          .single();
-
-        if (insertError) {
-          console.error('[target_finder] CH target insert error:', insertError);
-          continue;
-        }
-
-        const targetId = newTarget.id;
-
-        // Add to dedup sets
-        if (chCompany.domain) dedupSets.existingDomains.add(chCompany.domain);
-        dedupSets.existingCHNumbers.add(chCompany.companyNumber);
-
-        // Create lead
-        await admin.from('leads').insert({
-          target_id: targetId,
-          itp_id: itp.id,
-          score: item.score,
-          score_reason: item.reason ?? null,
-        });
-        chLeadsCreated++;
-
-        // Save officers as contacts BEFORE enrichment
-        for (const officer of chCompany.officers) {
-          if (!officer.first_name && !officer.last_name) continue;
-          await admin.from('contacts').insert({
-            target_id: targetId,
-            account_id: userDetails.account_id,
-            first_name: officer.first_name,
-            last_name: officer.last_name,
-            role: officer.role,
-            email: null,
-            source: 'companies_house',
-          });
-        }
-
-        // Run enrichment (scrape + Apollo reveal for officers' emails)
-        if (chCompany.domain) {
-          const enrichTotal = Math.min(highScored.length, dynamicTarget - initialHighScoreCount);
-          const enrichPercent = 40 + Math.round((chLeadsCreated / Math.max(enrichTotal, 1)) * 35);
-          await sendProgress(user_details_id, `Belfort is enriching lead data...`, enrichPercent);
-          try {
-            await runEnrichTarget({ target_id: targetId, user_details_id, silent: true });
-            await new Promise(r => setTimeout(r, 1000));
-          } catch (err) {
-            console.error(`[target_finder] CH enrich error for ${chCompany.companyName}:`, err.message);
-          }
-        }
-      }
-
-      // Check if we've hit target
-      const currentCount = await countHighScoreLeads(itp.id);
-      console.log(`[target_finder] After CH phase: ${currentCount}/${dynamicTarget} high-score leads`);
-      if (currentCount >= dynamicTarget) {
-        console.log('[target_finder] Target reached after CH phase, skipping Serper backfill');
-        return finalize(itp, user_details_id);
+        const count = await countHighScoreLeads(itp.id);
+        if (count >= dynamicTarget) break;
       }
     }
   } catch (err) {
-    console.error('[target_finder] Companies House phase error:', err.message);
-    // Continue to Serper backfill
+    console.error('[target_finder] Step 3 error:', err.message);
   }
 
   // ================================================================
-  // PHASE 2: Google/Serper backfill
-  // ================================================================
-  console.log('[target_finder] === PHASE 2: Google/Serper backfill ===');
-  await sendProgress(user_details_id, 'Belfort is searching Google for more leads...', 80);
-
-  const scorePromptBase = fillTemplate(scorePromptTemplate);
-
-  for (let iteration = 0; iteration < MAX_SERPER_ITERATIONS; iteration++) {
-    const currentCount = await countHighScoreLeads(itp.id);
-    console.log(`[target_finder] Serper iteration ${iteration + 1}: ${currentCount}/${dynamicTarget} high-score leads`);
-    if (currentCount >= dynamicTarget) {
-      console.log('[target_finder] Target reached, stopping Serper backfill.');
-      break;
-    }
-    const serperPercent = 80 + Math.min(Math.round((iteration / MAX_SERPER_ITERATIONS) * 15), 14);
-    await sendProgress(user_details_id, `Belfort is searching Google for more leads...`, serperPercent);
-
-    // Build context for search query generation
-    const { data: currentLeads } = await admin
-      .from('leads')
-      .select('id, target_id, score, score_reason, rejected, search_query_ids, targets(id, domain, title, link)')
-      .eq('itp_id', itp.id);
-
-    let previousTargetsText = 'None yet.';
-    let previousQueriesText = 'None yet.';
-
-    const { data: allPreviousQueries } = await admin
-      .from('target_finder_google_search_prompts')
-      .select('query')
-      .eq('itp', itp.id)
-      .order('created_at', { ascending: true });
-
-    if (allPreviousQueries?.length > 0) {
-      previousQueriesText = allPreviousQueries.map((q, i) => `${i + 1}. ${q.query}`).join('\n');
-    }
-    if (currentLeads?.length > 0) {
-      previousTargetsText = currentLeads.map(l => {
-        const target = l.targets;
-        return `- Title: ${target?.title ?? 'N/A'} | Website: ${target?.link ?? 'N/A'} | Score: ${l.score ?? 'N/A'} | Reason: ${l.score_reason ?? 'N/A'}`;
-      }).join('\n');
-    }
-
-    // Generate search query
-    const searchPrompt = fillTemplate(searchPromptTemplate, {
-      '{{previous_targets}}': previousTargetsText,
-      '{{previous_queries}}': previousQueriesText,
-    });
-
-    const searchResponse = await callClaude({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 256,
-      messages: [{ role: 'user', content: searchPrompt }],
-    });
-
-    const query = searchResponse.content[0].text.trim();
-    console.log('[target_finder] Serper query:', query);
-
-    const { data: insertedPrompt } = await admin
-      .from('target_finder_google_search_prompts')
-      .insert({ itp: itp.id, query })
-      .select('id')
-      .single();
-
-    const searchPromptId = insertedPrompt?.id;
-
-    // Call Serper
-    const serperResponse = await fetch('https://google.serper.dev/search', {
-      method: 'POST',
-      headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        q: query,
-        num: 10,
-        ...(itp.location ? { location: itp.location } : {}),
-        hl: 'en',
-      }),
-    });
-
-    const serperData = await serperResponse.json();
-    console.log('[target_finder] Serper status:', serperResponse.status, '| organic:', serperData.organic?.length ?? 0);
-    if (!serperResponse.ok) {
-      console.error('[target_finder] Serper error:', JSON.stringify(serperData));
-      break;
-    }
-
-    const organic = serperData.organic ?? [];
-
-    // Dedup and collect new results
-    const newResults = [];
-    for (const result of organic) {
-      if (!result.link) continue;
-
-      let domain;
-      try { domain = new URL(result.link).hostname.replace(/^www\./, ''); } catch { continue; }
-
-      if (dedupSets.customerDomains.has(result.link.toLowerCase())) continue;
-      if (isDomainBlocked(domain)) continue;
-      if (dedupSets.existingDomains.has(domain)) {
-        // Check if lead already exists
-        const { data: existingTarget } = await admin
-          .from('targets').select('id').eq('domain', domain).maybeSingle();
-        if (existingTarget) {
-          const { data: existingLead } = await admin
-            .from('leads').select('id, search_query_ids').eq('target_id', existingTarget.id).eq('itp_id', itp.id).maybeSingle();
-          if (existingLead) {
-            const updatedQueryIds = [...(existingLead.search_query_ids ?? []), { id: searchPromptId, position: result.position }];
-            await admin.from('leads').update({ search_query_ids: updatedQueryIds }).eq('id', existingLead.id);
-          } else {
-            newResults.push({ ...result, _domain: domain, _existingTargetId: existingTarget.id });
-          }
-        }
-        continue;
-      }
-
-      newResults.push({ ...result, _domain: domain, _existingTargetId: null });
-    }
-
-    console.log('[target_finder] New Serper results to score:', newResults.length);
-
-    if (newResults.length > 0) {
-      const targetsList = newResults.map((r, i) =>
-        `[${i}] Title: ${r.title ?? 'N/A'}\nURL: ${r.link}\nSnippet: ${r.snippet ?? ''}`
-      ).join('\n\n');
-
-      const scorePrompt = scorePromptBase.replace('{{response_from_serper}}', targetsList);
-
-      const scoreResponse = await callClaude({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 1024,
-        messages: [{ role: 'user', content: scorePrompt }],
-      });
-
-      let scores = [];
-      try {
-        const raw = scoreResponse.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-        scores = JSON.parse(raw);
-      } catch (e) {
-        console.error('[target_finder] Failed to parse Serper scores:', scoreResponse.content[0].text);
-      }
-
-      for (const item of scores) {
-        const result = newResults[item.index];
-        if (!result) continue;
-        console.log('[target_finder] Serper scored:', result.link, '→', item.score, item.reason);
-
-        let targetId;
-        const isNewTarget = !result._existingTargetId;
-
-        if (result._existingTargetId) {
-          targetId = result._existingTargetId;
-        } else {
-          const { data: newTarget, error: insertError } = await admin
-            .from('targets')
-            .insert({ domain: result._domain, title: result.title ?? null, link: result.link ?? null })
-            .select('id').single();
-          if (insertError) {
-            console.error('[target_finder] Serper target insert error:', insertError);
-            continue;
-          }
-          targetId = newTarget.id;
-          dedupSets.existingDomains.add(result._domain);
-        }
-
-        if ((item.score ?? 0) >= HIGH_SCORE_THRESHOLD) {
-          await admin.from('leads').insert({
-            target_id: targetId,
-            itp_id: itp.id,
-            score: item.score ?? null,
-            score_reason: item.reason ?? null,
-            search_query_ids: [{ id: searchPromptId, position: result.position }],
-          });
-        }
-
-        if ((item.score ?? 0) >= HIGH_SCORE_THRESHOLD && isNewTarget) {
-          try {
-            await runEnrichTarget({ target_id: targetId, user_details_id, silent: true });
-            await new Promise(r => setTimeout(r, 1000));
-          } catch (err) {
-            console.error('[target_finder] Serper enrich error:', err.message);
-          }
-        }
-      }
-    }
-  }
-
-  // ================================================================
-  // PHASE 3: Apollo company search (optional)
+  // STEP 4: Apollo Company Search (optional)
   // ================================================================
   if (APOLLO_COMPANY_SEARCH_ENABLED) {
-    const currentCount = await countHighScoreLeads(itp.id);
-    if (currentCount < dynamicTarget) {
-      console.log('[target_finder] === PHASE 3: Apollo company search ===');
+    const count = await countHighScoreLeads(itp.id);
+    if (count < dynamicTarget) {
+      console.log('[target_finder] === STEP 4: Apollo Company Search ===');
+      await sendProgress(user_details_id, 'Belfort is searching Apollo...', 92);
+
       try {
         const { searchCompaniesByName } = await import('../../../../config/apollo.js');
+        const terms = searchProfile.buyer_descriptions?.slice(0, 3) ?? [];
 
-        // Generate Apollo search terms from ITP
-        const apolloResponse = await callClaude({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 256,
-          messages: [{
-            role: 'user',
-            content: `Given this ITP, suggest 3-5 short keyword searches to find matching companies on a business database.\n\nITP: ${itp.itp_summary}\nDemographics: ${itp.itp_demographic}\nLocation: ${itp.location ?? 'UK'}\n\nRespond with a JSON array of search strings, e.g. ["joinery contractor", "bespoke furniture maker"]`,
-          }],
-        });
-
-        let searchTerms = [];
-        try { searchTerms = JSON.parse(apolloResponse.content[0].text.trim()); } catch {}
-
-        for (const term of searchTerms) {
+        for (const term of terms) {
           const orgs = await searchCompaniesByName(term, [itp.location ?? 'United Kingdom']);
           for (const org of orgs) {
             const domain = org.primary_domain;
             if (!domain || dedupSets.existingDomains.has(domain) || dedupSets.customerDomains.has(domain)) continue;
 
-            // Create target + score inline (simplified)
-            const { data: newTarget } = await admin
-              .from('targets')
+            const { data: newTarget } = await admin.from('targets')
               .insert({ domain, title: org.name ?? null, link: `https://${domain}`, industry: org.industry ?? null })
               .select('id').single();
-
             if (!newTarget) continue;
             dedupSets.existingDomains.add(domain);
 
-            // Score with Serper prompt (treating Apollo data like a search result)
+            // Quick score
             const targetsList = `[0] Title: ${org.name ?? 'N/A'}\nURL: https://${domain}\nSnippet: ${org.short_description ?? ''}`;
-            const scorePrompt = scorePromptBase.replace('{{response_from_serper}}', targetsList);
-            const scoreRes = await callClaude({ model: 'claude-sonnet-4-6', max_tokens: 256, messages: [{ role: 'user', content: scorePrompt }] });
+            const sp = fillTemplate(hybridScoreTemplate, { '{{buyer_context}}': buyerContext }).replace('{{hybrid_companies}}', targetsList);
+            const sr = await callClaude({ model: 'claude-sonnet-4-6', max_tokens: 256, messages: [{ role: 'user', content: sp }] });
 
             let score = 0, reason = '';
             try {
-              const parsed = JSON.parse(scoreRes.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, ''));
-              score = parsed[0]?.score ?? 0;
-              reason = parsed[0]?.reason ?? '';
+              const parsed = JSON.parse(sr.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, ''));
+              score = parsed[0]?.score ?? 0; reason = parsed[0]?.reason ?? '';
             } catch {}
 
             if (score >= HIGH_SCORE_THRESHOLD) {
               await admin.from('leads').insert({ target_id: newTarget.id, itp_id: itp.id, score, score_reason: reason });
-              try {
-                await runEnrichTarget({ target_id: newTarget.id, user_details_id, silent: true });
-                await new Promise(r => setTimeout(r, 1000));
-              } catch (err) {
-                console.error('[target_finder] Apollo enrich error:', err.message);
-              }
+              try { await runEnrichTarget({ target_id: newTarget.id, user_details_id, silent: true }); } catch {}
             }
           }
-
-          // Check target
-          const count = await countHighScoreLeads(itp.id);
-          if (count >= dynamicTarget) break;
+          const c = await countHighScoreLeads(itp.id);
+          if (c >= dynamicTarget) break;
         }
       } catch (err) {
-        console.error('[target_finder] Apollo company search phase error:', err.message);
+        console.error('[target_finder] Step 4 error:', err.message);
       }
     }
   }
@@ -553,23 +504,17 @@ export async function executeSkill({ user_details_id, itp_id }) {
 
 async function finalize(itp, user_details_id) {
   await sendProgress(user_details_id, 'Belfort is finalising results...', 95);
+
   const { data: finalLeads } = await getSupabaseAdmin()
-    .from('leads')
-    .select('id, score, rejected, target_id, targets(id, title, link)')
+    .from('leads').select('id, score, rejected, target_id, targets(id, title, link)')
     .eq('itp_id', itp.id);
 
   const highScoreTotal = (finalLeads ?? []).filter(l => (l.score ?? 0) >= HIGH_SCORE_THRESHOLD && !l.rejected).length;
   console.log(`[target_finder] Final: ${highScoreTotal} high-score leads`);
 
   await processSkillOutput({
-    employee: 'lead_gen_expert',
-    skill_name: 'target_finder_ten_leads',
-    user_details_id,
-    output: {
-      itp_id: itp.id,
-      high_score_count: highScoreTotal,
-      total_targets: (finalLeads ?? []).length,
-    },
+    employee: 'lead_gen_expert', skill_name: 'target_finder_ten_leads', user_details_id,
+    output: { itp_id: itp.id, high_score_count: highScoreTotal, total_targets: (finalLeads ?? []).length },
   });
 
   return { user_details_id, itp_id: itp.id, leads: finalLeads ?? [] };

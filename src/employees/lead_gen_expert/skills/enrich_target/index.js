@@ -1,6 +1,6 @@
 import { getAnthropic } from '../../../../config/anthropic.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
-import { enrichCompany, revealPerson } from '../../../../config/apollo.js';
+import { enrichCompany, revealPerson, searchPeopleAtCompany } from '../../../../config/apollo.js';
 import { scrapeWebsite } from '../../../../config/scraper.js';
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
@@ -111,7 +111,56 @@ export async function executeSkill({ target_id, user_details_id, silent = true }
     }
   }
 
-  // ── Step 4: Apollo People Reveal ───────────────────────────────────
+  // ── Step 4: Apollo People Search ────────────────────────────────────
+  // Find additional contacts at this company that aren't on the website
+  const apolloPeople = await searchPeopleAtCompany(domain);
+  const existingNames = new Set(
+    extractedPeople
+      .filter(p => p.first_name && p.last_name)
+      .map(p => `${p.first_name.toLowerCase()} ${p.last_name.toLowerCase()}`)
+  );
+  for (const ap of apolloPeople) {
+    const nameKey = `${(ap.first_name ?? '').toLowerCase()} ${(ap.last_name ?? '').toLowerCase()}`.trim();
+    if (nameKey && !existingNames.has(nameKey)) {
+      extractedPeople.push({
+        first_name: ap.first_name,
+        last_name: ap.last_name,
+        email: ap.email,
+        role: ap.title,
+        phone: ap.phone,
+        linkedin: ap.linkedin_url,
+        source: 'apollo_search',
+      });
+      existingNames.add(nameKey);
+    }
+  }
+  console.log(`[enrich_target] Apollo people search added ${apolloPeople.length > 0 ? apolloPeople.length : 0} people for ${domain}`);
+
+  // ── Step 5: Load CH officer contacts for Apollo reveal ─────────────
+  // CH officers were saved with names but no emails — try to reveal them
+  const { data: chOfficers } = await admin
+    .from('contacts')
+    .select('id, first_name, last_name, email, role')
+    .eq('target_id', target_id)
+    .eq('source', 'companies_house');
+
+  for (const officer of (chOfficers ?? [])) {
+    if (officer.email) continue; // Already has email
+    const nameKey = `${(officer.first_name ?? '').toLowerCase()} ${(officer.last_name ?? '').toLowerCase()}`.trim();
+    if (!nameKey || existingNames.has(nameKey)) continue;
+    // Add to extractedPeople so they go through Apollo reveal below
+    extractedPeople.push({
+      first_name: officer.first_name,
+      last_name: officer.last_name,
+      email: null,
+      role: officer.role,
+      source: 'companies_house',
+      _existingContactId: officer.id, // Flag to update existing record instead of inserting
+    });
+    existingNames.add(nameKey);
+  }
+
+  // ── Step 6: Apollo People Reveal ───────────────────────────────────
   const savedContacts = [];
 
   for (const person of extractedPeople) {
@@ -136,6 +185,21 @@ export async function executeSkill({ target_id, user_details_id, silent = true }
     // Skip if still no email
     if (!email) {
       console.log(`[enrich_target] No email for ${person.first_name ?? 'unknown'} ${person.last_name ?? ''} — skipping`);
+      continue;
+    }
+
+    // If this is a CH officer we're updating with a revealed email
+    if (person._existingContactId && email) {
+      await admin.from('contacts').update({
+        email: email.toLowerCase(),
+        phone: phone ?? undefined,
+        linkedin_url: linkedin ?? undefined,
+        role: role ?? undefined,
+        source: 'apollo_reveal',
+      }).eq('id', person._existingContactId);
+      console.log(`[enrich_target] Updated CH officer: ${person.first_name} ${person.last_name} <${email}>`);
+      const { data: updated } = await admin.from('contacts').select().eq('id', person._existingContactId).single();
+      if (updated) savedContacts.push(updated);
       continue;
     }
 
