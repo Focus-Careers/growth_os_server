@@ -51,6 +51,8 @@ export async function executeSkill({ user_details_id }) {
 
   console.log(`[analyse_customers] Analysing ${customers.length} customers for account ${userDetails.account_id}`);
 
+  const anthropic = getAnthropic();
+
   // Look up each customer on Companies House
   const customerProfiles = [];
   for (const customer of customers) {
@@ -58,30 +60,70 @@ export async function executeSkill({ user_details_id }) {
     if (!name) continue;
 
     try {
-      // Search CH by company name
-      const searchResult = await searchCompanies({ companyName: name, size: 5 });
-      const items = searchResult.items ?? [];
+      let items = [];
 
-      if (items.length > 0) {
-        const best = items[0];
-        const profile = await getCompanyProfile(best.company_number);
+      // Prefer domain-based search if website available (more unique than name)
+      if (customer.organisation_website) {
+        let domain;
+        try {
+          const url = customer.organisation_website.startsWith('http')
+            ? customer.organisation_website
+            : `https://${customer.organisation_website}`;
+          domain = new URL(url).hostname.replace(/^www\./, '');
+        } catch {}
 
-        if (profile) {
-          customerProfiles.push({
-            name,
-            company_number: best.company_number,
-            sic_codes: profile.sic_codes ?? [],
-            date_of_creation: profile.date_of_creation ?? null,
-            company_type: profile.type ?? null,
-            location: [
-              profile.registered_office_address?.locality,
-              profile.registered_office_address?.region,
-            ].filter(Boolean).join(', ') || null,
-          });
-          console.log(`[analyse_customers] ${name} → CH ${best.company_number} | SIC: ${(profile.sic_codes ?? []).join(', ')}`);
+        if (domain) {
+          const domainResult = await searchCompanies({ companyName: domain.split('.')[0], size: 5 });
+          items = domainResult.items ?? [];
         }
-      } else {
+      }
+
+      // Fall back to name search
+      if (items.length === 0) {
+        const nameResult = await searchCompanies({ companyName: name, size: 5 });
+        items = nameResult.items ?? [];
+      }
+
+      if (items.length === 0) {
         console.log(`[analyse_customers] ${name} → not found on CH`);
+        continue;
+      }
+
+      // Use Claude to pick the best CH match (avoids blindly taking first result)
+      let bestItem = items[0];
+      if (items.length > 1) {
+        const candidates = items.map((it, i) =>
+          `[${i}] ${it.company_name} (${it.company_number}) — status: ${it.company_status ?? 'unknown'}`
+        ).join('\n');
+
+        const matchRes = await anthropic.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 64,
+          messages: [{
+            role: 'user',
+            content: `Which of these Companies House results best matches the customer named "${name}"${customer.organisation_website ? ` (website: ${customer.organisation_website})` : ''}?\n\n${candidates}\n\nRespond with only the index number (0, 1, 2...), or "none" if none are a good match.`,
+          }],
+        });
+
+        const pick = matchRes.content[0].text.trim();
+        if (pick === 'none') {
+          console.log(`[analyse_customers] ${name} → Claude found no good CH match`);
+          continue;
+        }
+        const idx = parseInt(pick);
+        if (!isNaN(idx) && items[idx]) bestItem = items[idx];
+      }
+
+      const profile = await getCompanyProfile(bestItem.company_number);
+      if (profile) {
+        customerProfiles.push({
+          name,
+          company_number: bestItem.company_number,
+          sic_codes: profile.sic_codes ?? [],
+          date_of_creation: profile.date_of_creation ?? null,
+          company_type: profile.type ?? null,
+        });
+        console.log(`[analyse_customers] ${name} → CH ${bestItem.company_number} | SIC: ${(profile.sic_codes ?? []).join(', ')}`);
       }
     } catch (err) {
       console.error(`[analyse_customers] Error looking up ${name}:`, err.message);
@@ -98,7 +140,6 @@ export async function executeSkill({ user_details_id }) {
 
   // Aggregate patterns
   const sicCodeCounts = {};
-  const locations = [];
   const ages = [];
   const now = new Date().getFullYear();
 
@@ -106,7 +147,6 @@ export async function executeSkill({ user_details_id }) {
     for (const sic of p.sic_codes) {
       sicCodeCounts[sic] = (sicCodeCounts[sic] ?? 0) + 1;
     }
-    if (p.location) locations.push(p.location);
     if (p.date_of_creation) {
       const year = parseInt(p.date_of_creation.split('-')[0]);
       if (!isNaN(year)) ages.push(now - year);
@@ -123,7 +163,6 @@ export async function executeSkill({ user_details_id }) {
   const analysis = [
     `Customers analysed: ${customerProfiles.length} of ${customers.length}`,
     `Most common SIC codes: ${topSicCodes.join(', ')}`,
-    `Customer locations: ${[...new Set(locations)].join('; ')}`,
     avgAge ? `Average company age: ${avgAge} years` : null,
   ].filter(Boolean).join('\n');
 
@@ -146,11 +185,11 @@ export async function executeSkill({ user_details_id }) {
     '',
     '# Individual Customer Profiles',
     ...customerProfiles.map(p =>
-      `- ${p.name}: SIC ${p.sic_codes.join(', ')} | Location: ${p.location ?? 'Unknown'} | Founded: ${p.date_of_creation ?? 'Unknown'} | Type: ${p.company_type ?? 'Unknown'}`
+      `- ${p.name}: SIC ${p.sic_codes.join(', ')} | Founded: ${p.date_of_creation ?? 'Unknown'} | Type: ${p.company_type ?? 'Unknown'}`
     ),
   ].join('\n');
 
-  const response = await getAnthropic().messages.create({
+  const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 1024,
     system: prompt,
