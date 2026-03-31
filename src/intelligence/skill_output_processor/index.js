@@ -51,13 +51,9 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
 
     case 'business_analyst/analyse_customers': {
       if (output.skipped) {
-        // No customers or no ITP — broadcast start_mobilisation directly
-        console.log(`[skill_output] analyse_customers skipped (${output.reason}), broadcasting signed_up_first_message`);
-        await getSupabaseAdmin().channel(`user:${user_details_id}`).send({
-          type: 'broadcast',
-          event: 'start_mobilisation',
-          payload: { mobilisation: 'signed_up_first_message' },
-        });
+        // No customers or no ITP — nothing to do, signed_up_first_message already started
+        console.log(`[skill_output] analyse_customers skipped (${output.reason})`);
+        break;
       } else {
         // Refined ITP — update the existing ITP record and show for review
         const itpId = output.itp_id;
