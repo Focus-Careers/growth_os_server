@@ -51,16 +51,13 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
 
     case 'business_analyst/analyse_customers': {
       if (output.skipped) {
-        // No customers or no ITP — skip straight to signed_up_first_message
-        console.log(`[skill_output] analyse_customers skipped (${output.reason}), queueing signed_up_first_message`);
-        const { data: ud } = await getSupabaseAdmin()
-          .from('user_details').select('queued_mobilisations').eq('id', user_details_id).single();
-        const queue = ud?.queued_mobilisations ?? [];
-        if (!queue.some(q => q.mobilisation === 'signed_up_first_message')) {
-          await getSupabaseAdmin().from('user_details').update({
-            queued_mobilisations: [...queue, { mobilisation: 'signed_up_first_message', queued_at: new Date().toISOString() }],
-          }).eq('id', user_details_id);
-        }
+        // No customers or no ITP — broadcast start_mobilisation directly
+        console.log(`[skill_output] analyse_customers skipped (${output.reason}), broadcasting signed_up_first_message`);
+        await getSupabaseAdmin().channel(`user:${user_details_id}`).send({
+          type: 'broadcast',
+          event: 'start_mobilisation',
+          payload: { mobilisation: 'signed_up_first_message' },
+        });
       } else {
         // Refined ITP — update the existing ITP record and show for review
         const itpId = output.itp_id;
