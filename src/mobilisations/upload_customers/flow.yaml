@@ -42,6 +42,4 @@ on_complete:
       match_value: "@user_details_id"
       set:
         signup_complete: true
-  employee: "business_analyst"
-  skill: "analyse_customers"
-  inputs: {}
+  mobilisation: "signed_up_first_message"

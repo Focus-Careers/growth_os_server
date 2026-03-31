@@ -112,7 +112,7 @@ export async function processMessage(record) {
 
   const conversationHistory = [
     '# Recent conversation:',
-    ...recentHistory.map(m => `${m.is_agent ? 'Watson (CMO)' : 'User'}: ${m.message_body}`),
+    ...recentHistory.map(m => `${m.is_agent ? 'Watson (Head of Growth)' : 'User'}: ${m.message_body}`),
     '',
     '# LATEST MESSAGE FROM USER (this is what you need to route):',
     `User: ${userMessage}`,

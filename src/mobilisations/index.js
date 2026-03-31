@@ -92,6 +92,22 @@ export async function completeMobilisation(mobilisationName, responses, messages
         .update({ active_mobilisation: on_complete.mobilisation })
         .eq('id', user_details_id);
     }
+
+    // After customer upload: dispatch analyse_customers in background IF customers exist
+    if (mobilisationName === 'upload_customers' && user_details_id) {
+      const { data: ud } = await getSupabaseAdmin()
+        .from('user_details').select('account_id').eq('id', user_details_id).single();
+      if (ud?.account_id) {
+        const { count } = await getSupabaseAdmin()
+          .from('customers').select('id', { count: 'exact', head: true }).eq('account_id', ud.account_id);
+        if (count && count > 0) {
+          console.log(`[completeMobilisation] ${count} customers found, dispatching analyse_customers in background`);
+          dispatchSkill('business_analyst', 'analyse_customers', { user_details_id })
+            .catch(err => console.error('[completeMobilisation] analyse_customers error:', err));
+        }
+      }
+    }
+
     return { next_mobilisation: on_complete.mobilisation };
   }
 
