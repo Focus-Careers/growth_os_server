@@ -14,6 +14,23 @@ import { sendDirectResponse } from '../app_message_sender/index.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const employeesDir = join(__dirname, '../../employees');
 
+async function callClaude(params, retries = 4) {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await getAnthropic().messages.create(params);
+    } catch (err) {
+      const status = err?.status;
+      if ((status === 429 || status === 529) && attempt < retries - 1) {
+        const wait = status === 529 ? 8000 : 60000;
+        console.log(`[amp] ${status} error, waiting ${wait / 1000}s before retry ${attempt + 1}...`);
+        await new Promise(r => setTimeout(r, wait));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
 async function loadSkillDescriptions() {
   const entries = await readdir(employeesDir, { recursive: true });
   const descFiles = entries.filter(e => e.endsWith('description_for_msg_processor.md'));
@@ -127,7 +144,7 @@ export async function processMessage(record) {
     messages: [{ role: 'user', content: conversationHistory }],
   };
 
-  const response = await getAnthropic().messages.create(claudeRequest);
+  const response = await callClaude(claudeRequest);
 
   const raw = response.content[0].text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
   let decision;

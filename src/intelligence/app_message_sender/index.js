@@ -14,6 +14,23 @@ import { broadcastTyping } from '../typing_broadcaster/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+async function callClaude(params, retries = 4) {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await getAnthropic().messages.create(params);
+    } catch (err) {
+      const status = err?.status;
+      if ((status === 429 || status === 529) && attempt < retries - 1) {
+        const wait = status === 529 ? 8000 : 60000;
+        console.log(`[app_message_sender] ${status} error, waiting ${wait / 1000}s before retry ${attempt + 1}...`);
+        await new Promise(r => setTimeout(r, wait));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
 const skillPromptMap = {
   'lead_gen_expert/analyse_website': 'analyse_website.md',
   'business_analyst/define_itp': 'define_itp.md',
@@ -30,7 +47,7 @@ export async function sendDirectResponse({ user_details_id, conversationHistory 
 
   const directResponsePrompt = await readFile(join(__dirname, 'direct_response.md'), 'utf-8');
 
-  const response = await getAnthropic().messages.create({
+  const response = await callClaude({
     model: 'claude-sonnet-4-6',
     max_tokens: 512,
     system: directResponsePrompt,
@@ -61,7 +78,7 @@ export async function sendAppMessage({ type, employee, skill, user_details_id, s
 
   const userMessage = JSON.stringify({ type, employee, skill, output }, null, 2);
 
-  const response = await getAnthropic().messages.create({
+  const response = await callClaude({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 1024,
     system: systemPrompt,
