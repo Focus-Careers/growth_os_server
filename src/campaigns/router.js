@@ -2,6 +2,7 @@ import express from 'express';
 import { getSupabaseAdmin } from '../config/supabase.js';
 import { attachEmailAccount, updateCampaignStatus, saveSequences } from '../config/smartlead.js';
 import { resolveSmartleadSender } from '../employees/email_campaign_manager/helpers/resolve_smartlead_sender.js';
+import { dispatchSkill } from '../employees/index.js';
 
 const router = express.Router();
 
@@ -136,6 +137,34 @@ router.post('/update', async (req, res) => {
     console.error('[update] Error:', err);
     res.status(500).json({ error: 'Internal error', detail: err.message });
   }
+});
+
+/**
+ * POST /api/campaigns/find-leads
+ * Manually trigger target_finder_100_leads for a campaign.
+ * Body: { campaign_id, user_details_id }
+ */
+router.post('/find-leads', async (req, res) => {
+  const { campaign_id, user_details_id } = req.body;
+  if (!campaign_id || !user_details_id) {
+    return res.status(400).json({ error: 'campaign_id and user_details_id required' });
+  }
+
+  const admin = getSupabaseAdmin();
+  const { data: campaign } = await admin
+    .from('campaigns').select('itp_id').eq('id', campaign_id).single();
+
+  if (!campaign?.itp_id) {
+    return res.status(404).json({ error: 'Campaign not found or has no ITP' });
+  }
+
+  res.json({ dispatched: true, campaign_id, itp_id: campaign.itp_id });
+
+  dispatchSkill('lead_gen_expert', 'target_finder_100_leads', {
+    user_details_id,
+    itp_id: campaign.itp_id,
+    campaign_id,
+  }).catch(err => console.error('[find-leads] dispatch error:', err));
 });
 
 export default router;

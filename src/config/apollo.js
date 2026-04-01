@@ -64,6 +64,44 @@ export async function searchCompaniesByName(companyName, locations = ['United Ki
 }
 
 /**
+ * Search for people at a company by domain.
+ * Endpoint: POST /v1/mixed_people/search
+ * Returns array of people with name, title, email, phone, linkedin.
+ */
+export async function searchPeopleAtCompany(domain, { perPage = 10 } = {}) {
+  console.log(`[apollo] People search at ${domain}`);
+  try {
+    const res = await fetch(`${APOLLO_BASE_URL}/mixed_people/api_search`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({
+        q_organization_domains: [domain],
+        per_page: perPage,
+        page: 1,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      console.error('[apollo] People search error:', JSON.stringify(data));
+      return [];
+    }
+    const people = (data.people ?? []).map(p => ({
+      first_name: p.first_name ?? null,
+      last_name: p.last_name ?? null,
+      email: p.email ?? null,
+      title: p.title ?? null,
+      linkedin_url: p.linkedin_url ?? null,
+      phone: p.phone_numbers?.[0]?.sanitized_number ?? null,
+    }));
+    console.log(`[apollo] People search returned ${people.length} results for ${domain}`);
+    return people;
+  } catch (err) {
+    console.error(`[apollo] People search error for ${domain}:`, err.message);
+    return [];
+  }
+}
+
+/**
  * Reveal a person's email using name + domain.
  * Endpoint: POST /v1/people/match
  */

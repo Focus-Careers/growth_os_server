@@ -5,11 +5,11 @@ Company website: {{account_organisation_website}}
 Company description: {{account_organisation_description}}
 Problem solved: {{account_organisation_problem_solved}}
 
-You have been provided with a list of possible targets. These are real companies with structured data.
+You have been provided with a list of possible targets found via Google search. Some have been cross-referenced with Companies House for verified data.
 
 Here are the targets:
 
-{{structured_companies}}
+{{hybrid_companies}}
 
 You have the following ideal target profile (ITP) for {{account_organisation_name}}:
 
@@ -21,12 +21,10 @@ Buying Trigger: {{itp_buying_trigger}}
 {{buyer_context}}
 
 For each company, generate a score between 0 and 100 based on how well it matches the ITP. Consider:
-- Does this company's industry suggest they would actually BUY from {{account_organisation_name}}? Think about the supply chain.
-- SIC code relevance (does the industry match what the ITP targets?)
-- Location match (is the company in the right geographic area?)
-- Company maturity (date of creation — is it established enough?)
-- Officers/directors (do their roles suggest the right type of business?)
-- Company type (Ltd, PLC, LLP — does it fit the ITP's target demographic?)
+- Does this company's business suggest they would actually BUY from {{account_organisation_name}}? Think about the supply chain.
+- Website description relevance (does what they do match who the ITP targets?)
+- If Companies House data is available: SIC codes, location, company maturity
+- If no CH data: score based on website snippet alone (with lower confidence)
 
 Zero represents a total mismatch. 100 represents a perfect match. Also provide a one-sentence reason for the score.
 
