@@ -320,11 +320,11 @@ router.post('/invite/accept', async (req, res) => {
       });
     }
 
-    // Fetch auth user for email + metadata firstname
+    // Firstname: prefer existing user_details row (already-logged-in user),
+    // fall back to auth metadata (brand-new user invited via InviteSignup).
+    // Email is intentionally excluded — user_details.email has a UNIQUE constraint
+    // and the email already lives in auth.users tied via auth_id.
     const { data: authUser } = await supabase.auth.admin.getUserById(auth_id);
-    const email = authUser?.user?.email ?? null;
-
-    // Firstname: prefer existing user_details row, fall back to auth metadata
     const { data: existingUd } = await supabase
       .from('user_details').select('firstname').eq('auth_id', auth_id).limit(1).single();
     const firstname = existingUd?.firstname ?? authUser?.user?.user_metadata?.firstname ?? null;
@@ -338,7 +338,6 @@ router.post('/invite/accept', async (req, res) => {
         signup_complete: true,
         role: 'member',
         firstname,
-        email,
       })
       .select('id, account_id, role, firstname')
       .single();
