@@ -288,9 +288,14 @@ router.post('/invite/accept', async (req, res) => {
       });
     }
 
-    // Get firstname from their existing user_details if available
+    // Get firstname: existing user_details first, then auth metadata (set by invite signup form)
     const { data: existingUd } = await supabase
       .from('user_details').select('firstname').eq('auth_id', auth_id).limit(1).single();
+    let firstname = existingUd?.firstname ?? null;
+    if (!firstname) {
+      const { data: authUser } = await supabase.auth.admin.getUserById(auth_id);
+      firstname = authUser?.user?.user_metadata?.firstname ?? null;
+    }
 
     // Create user_details for the invitee on the shared account
     const { data: newUd, error: ude } = await supabase
@@ -300,7 +305,7 @@ router.post('/invite/accept', async (req, res) => {
         account_id: invite.account_id,
         signup_complete: true,
         role: 'member',
-        firstname: existingUd?.firstname ?? null,
+        firstname,
       })
       .select('id, account_id, role, firstname')
       .single();
@@ -323,6 +328,81 @@ router.post('/invite/accept', async (req, res) => {
     });
   } catch (err) {
     console.error('[user/invite/accept]', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/user/invite/preview — unauthenticated; validates token and returns account name
+// Used by the InviteSignup screen to show "You've been invited to join X" before auth
+router.post('/invite/preview', async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ error: 'token required' });
+
+    const supabase = getSupabaseAdmin();
+    const { data: invite } = await supabase
+      .from('invites')
+      .select('id, account_id, status, expires_at')
+      .eq('token', token)
+      .single();
+
+    if (!invite) return res.status(404).json({ error: 'Invite not found' });
+    if (invite.status !== 'pending') return res.status(400).json({ error: 'This invite has already been used.' });
+    if (new Date(invite.expires_at) < new Date()) {
+      await supabase.from('invites').update({ status: 'expired' }).eq('id', invite.id);
+      return res.status(400).json({ error: 'This invite has expired.' });
+    }
+
+    const { data: account } = await supabase
+      .from('account').select('organisation_name').eq('id', invite.account_id).single();
+
+    res.json({ account_name: account?.organisation_name ?? null, expires_at: invite.expires_at });
+  } catch (err) {
+    console.error('[user/invite/preview]', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/user/invite/create-auth-user — creates a Supabase auth user for a new invitee
+// Does NOT create account or user_details — that happens at invite/accept after login
+router.post('/invite/create-auth-user', async (req, res) => {
+  try {
+    const { token, firstname, email } = req.body;
+    if (!token || !email) return res.status(400).json({ error: 'token and email required' });
+
+    const supabase = getSupabaseAdmin();
+
+    // Validate token is still usable
+    const { data: invite } = await supabase
+      .from('invites').select('id, status, expires_at').eq('token', token).single();
+    if (!invite) return res.status(404).json({ error: 'Invite not found' });
+    if (invite.status !== 'pending') return res.status(400).json({ error: 'This invite has already been used.' });
+    if (new Date(invite.expires_at) < new Date()) return res.status(400).json({ error: 'This invite has expired.' });
+
+    // Check email not already registered
+    const { data: existingUsers } = await supabase.auth.admin.listUsers();
+    const alreadyExists = existingUsers?.users?.some(u => u.email === email.toLowerCase().trim());
+    if (alreadyExists) return res.status(409).json({ error: 'user_exists' });
+
+    // Create auth user only (firstname stored in metadata for use at invite/accept)
+    const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
+      email: email.toLowerCase().trim(),
+      user_metadata: { firstname: firstname?.trim() ?? '' },
+      email_confirm: true,
+    });
+    if (createError) return res.status(500).json({ error: createError.message });
+
+    // Generate magic link — user clicks it to log in, invite token processes on return
+    const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
+      type: 'magiclink',
+      email: email.toLowerCase().trim(),
+      options: { redirectTo: process.env.APP_URL },
+    });
+    if (linkError) return res.status(500).json({ error: linkError.message });
+
+    res.json({ login_url: linkData.properties.action_link });
+  } catch (err) {
+    console.error('[user/invite/create-auth-user]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
