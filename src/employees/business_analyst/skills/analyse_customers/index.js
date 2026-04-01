@@ -1,6 +1,5 @@
-import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname } from 'path';
 import { getAnthropic } from '../../../../config/anthropic.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { searchCompanies, getCompanyProfile } from '../../../../config/companies_house.js';
@@ -12,7 +11,8 @@ const MAX_CUSTOMERS_TO_ANALYSE = 150;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
- * Analyse existing customers via Companies House and refine the ITP.
+ * Analyse existing customers via Companies House and save a customer_profile
+ * to the account table. define_itp will read this when building the ITP.
  */
 export async function executeSkill({ user_details_id }) {
   const admin = getSupabaseAdmin();
@@ -36,19 +36,6 @@ export async function executeSkill({ user_details_id }) {
     return processSkillOutput({
       employee: 'business_analyst', skill_name: 'analyse_customers', user_details_id,
       output: { skipped: true, reason: 'no_customers' },
-    });
-  }
-
-  // Fetch the most recent ITP for this account
-  const { data: itp } = await admin
-    .from('itp').select('*').eq('account_id', userDetails.account_id)
-    .order('created_at', { ascending: false }).limit(1).single();
-
-  if (!itp) {
-    console.log('[analyse_customers] No ITP found, skipping');
-    return processSkillOutput({
-      employee: 'business_analyst', skill_name: 'analyse_customers', user_details_id,
-      output: { skipped: true, reason: 'no_itp' },
     });
   }
 
@@ -173,7 +160,7 @@ export async function executeSkill({ user_details_id }) {
     console.log('[analyse_customers] No customers found on Companies House');
     return processSkillOutput({
       employee: 'business_analyst', skill_name: 'analyse_customers', user_details_id,
-      output: { skipped: true, reason: 'no_ch_matches', itp_id: itp.id },
+      output: { skipped: true, reason: 'no_ch_matches' },
     });
   }
 
@@ -195,63 +182,31 @@ export async function executeSkill({ user_details_id }) {
   const topSicCodes = Object.entries(sicCodeCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10)
-    .map(([code, count]) => `${code} (${count} customers)`);
+    .map(([code, count]) => ({ code, count }));
 
   const avgAge = ages.length > 0 ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : null;
 
-  const analysis = [
-    `Customers matched: ${customerProfiles.length} of ${sample.length} sampled (${customers.length} total)`,
-    `Most common SIC codes: ${topSicCodes.join(', ')}`,
-    avgAge ? `Average company age: ${avgAge} years` : null,
-  ].filter(Boolean).join('\n');
+  const customer_profile = {
+    top_sic_codes: topSicCodes,
+    avg_company_age: avgAge,
+    matched_count: customerProfiles.length,
+    sampled_count: sample.length,
+  };
 
-  console.log(`[analyse_customers] Analysis:\n${analysis}`);
+  console.log(`[analyse_customers] Profile built: ${customerProfiles.length} matched, top SIC: ${topSicCodes.slice(0, 3).map(s => s.code).join(', ')}`);
 
-  await sendProgress('Warren is refining your target profile...', 90);
-
-  // Call Claude to refine the ITP
-  const prompt = await readFile(join(__dirname, 'prompt.md'), 'utf-8');
-
-  const context = [
-    '# Current ITP',
-    `Name: ${itp.name ?? ''}`,
-    `Summary: ${itp.itp_summary ?? ''}`,
-    `Demographics: ${itp.itp_demographic ?? ''}`,
-    `Pain Points: ${itp.itp_pain_points ?? ''}`,
-    `Buying Trigger: ${itp.itp_buying_trigger ?? ''}`,
-    `Location: ${itp.location ?? ''}`,
-    '',
-    '# Customer Analysis',
-    analysis,
-    '',
-    '# Individual Customer Profiles',
-    ...customerProfiles.map(p =>
-      `- ${p.name}: SIC ${p.sic_codes.join(', ')} | Founded: ${p.date_of_creation ?? 'Unknown'} | Type: ${p.company_type ?? 'Unknown'}`
-    ),
-  ].join('\n');
-
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 1024,
-    system: prompt,
-    messages: [{ role: 'user', content: context }],
-  });
-
-  const text = response.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-  let refined;
-  try {
-    refined = JSON.parse(text);
-  } catch {
-    console.error('[analyse_customers] Failed to parse refined ITP:', text);
-    refined = {};
-  }
+  // Save customer profile to account so define_itp can use it
+  await admin
+    .from('account')
+    .update({ customer_profile })
+    .eq('id', userDetails.account_id);
 
   await processSkillOutput({
     employee: 'business_analyst',
     skill_name: 'analyse_customers',
     user_details_id,
-    output: { ...refined, itp_id: itp.id, customer_count: customerProfiles.length },
+    output: { customer_profile, account_id: userDetails.account_id },
   });
 
-  return { user_details_id, refined, itp_id: itp.id };
+  return { user_details_id, customer_profile };
 }

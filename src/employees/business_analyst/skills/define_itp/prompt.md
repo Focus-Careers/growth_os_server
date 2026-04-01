@@ -13,6 +13,11 @@ Return a JSON object with exactly the following fields:
 - **buying_trigger**: A single sentence describing what typically triggers this customer to seek a solution.
 - **location**: The most likely geographic location or region of this target profile (e.g. "United Kingdom", "North America", "London, UK"). Infer this from the organisation's website and description if not explicit.
 
+If customer profile data is provided, use it to make the ITP more accurate:
+- Use the top SIC codes to tighten the industry/sector in demographics
+- Use average company age to inform company maturity expectations
+- Let the real customer patterns take precedence over assumptions from the website description alone
+
 Return only valid JSON. Do not include markdown formatting, code fences, or any text outside the JSON object.
 
 Example output:

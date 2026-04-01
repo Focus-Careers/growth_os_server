@@ -4,8 +4,8 @@ start_id: "start_itp"
 steps:
   - id: "start_itp"
     messages:
-      - "Great — I've saved your organisation details."
-      - "Now let's figure out who you actually want to market to."
+      - "Perfect. Now let's build your ideal target profile."
+      - "Warren will use everything we know about your organisation and customers to define who you should be targeting."
       - "Ready?"
     type: "option_set"
     options:
@@ -15,8 +15,7 @@ steps:
 
   - id: "complete"
     messages:
-    - "OK, we're going to generate your ideal target profile, or ITP, based on your website and the details you've provided."
-    - "I'll get Warren, our business analyst, to put this together. Give him a moment."
+    - "Great — Warren is putting your ideal target profile together now. Give him a moment."
     type: "end_flow"
 
 on_complete:
