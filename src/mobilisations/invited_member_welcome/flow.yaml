@@ -1,0 +1,10 @@
+name: "invited_member_welcome"
+start_id: "welcome"
+
+# Messages are generated dynamically in index.js (personalised + AI company status).
+# This yaml exists so completeMobilisation can read on_complete (none needed here).
+
+steps:
+  - id: "welcome"
+    type: "end_flow"
+    messages: []

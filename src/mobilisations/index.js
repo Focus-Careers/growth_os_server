@@ -18,6 +18,7 @@ import initiateCreateCampaign from './initiate_create_campaign/index.js';
 import setupSender from './setup_sender/index.js';
 import reviewCampaign from './review_campaign/index.js';
 import initiateItpRefiner from './initiate_itp_refiner/index.js';
+import invitedMemberWelcome from './invited_member_welcome/index.js';
 import { getStepFromFlow, getFlowConfig } from './step_loader.js';
 import { dispatchSkill } from '../employees/index.js';
 import { getSupabaseAdmin } from '../config/supabase.js';
@@ -37,6 +38,7 @@ const mobilisations = {
   setup_sender: setupSender,
   review_campaign: reviewCampaign,
   initiate_itp_refiner: initiateItpRefiner,
+  invited_member_welcome: invitedMemberWelcome,
 };
 
 export async function triggerMobilisation(name, messages, context = {}) {

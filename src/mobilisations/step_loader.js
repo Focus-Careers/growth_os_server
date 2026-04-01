@@ -40,13 +40,16 @@ function formatStep(step) {
 async function resolveVariables(messages, user_details_id) {
   const needsCustomerCount = messages.some(m => m.includes('{{count_customers_with_account_id}}'));
   const needsFirstName = messages.some(m => m.includes('{{user_first_name}}'));
-  if (!needsCustomerCount && !needsFirstName) return messages;
+  const needsOrgName = messages.some(m => m.includes('{{organisation_name}}'));
+  if (!needsCustomerCount && !needsFirstName && !needsOrgName) return messages;
 
   let result = [...messages];
 
+  // Fetch user_details once for all variable types that need it
+  const { data: userDetails } = await getSupabaseAdmin()
+    .from('user_details').select('account_id, firstname').eq('id', user_details_id).single();
+
   if (needsCustomerCount) {
-    const { data: userDetails } = await getSupabaseAdmin()
-      .from('user_details').select('account_id').eq('id', user_details_id).single();
     const { count } = await getSupabaseAdmin()
       .from('customers').select('*', { count: 'exact', head: true })
       .eq('account_id', userDetails?.account_id ?? '');
@@ -54,9 +57,13 @@ async function resolveVariables(messages, user_details_id) {
   }
 
   if (needsFirstName) {
-    const { data: userDetails } = await getSupabaseAdmin()
-      .from('user_details').select('firstname').eq('id', user_details_id).single();
     result = result.map(m => m.replace('{{user_first_name}}', userDetails?.firstname ?? ''));
+  }
+
+  if (needsOrgName) {
+    const { data: account } = await getSupabaseAdmin()
+      .from('account').select('organisation_name').eq('id', userDetails?.account_id ?? '').single();
+    result = result.map(m => m.replace('{{organisation_name}}', account?.organisation_name ?? 'your company'));
   }
 
   return result;
