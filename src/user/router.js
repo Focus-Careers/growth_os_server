@@ -10,6 +10,33 @@ const router = Router();
 
 const APP_URL = process.env.APP_URL || 'http://localhost:5173';
 
+// ── Login ─────────────────────────────────────────────────────────────────
+
+// POST /api/user/login — generate a magic link for an existing user (no email sent)
+router.post('/login', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'email required' });
+
+    const supabase = getSupabaseAdmin();
+    const { data: { users } } = await supabase.auth.admin.listUsers();
+    const existing = users?.find(u => u.email === email.toLowerCase().trim());
+    if (!existing) return res.status(404).json({ error: 'No account found with this email.' });
+
+    const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
+      type: 'magiclink',
+      email: email.toLowerCase().trim(),
+      options: { redirectTo: APP_URL },
+    });
+    if (linkError) return res.status(500).json({ error: linkError.message });
+
+    res.json({ login_url: linkData.properties.action_link });
+  } catch (err) {
+    console.error('[user/login]', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ── Companies ─────────────────────────────────────────────────────────────
 
 // POST /api/user/companies — list all user_details for an auth user, joined with account
