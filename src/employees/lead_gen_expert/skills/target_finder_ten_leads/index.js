@@ -39,14 +39,32 @@ async function countHighScoreLeads(itpId) {
 }
 
 async function buildDedupSets(accountId) {
-  const [targetsRes, customersRes] = await Promise.all([
-    getSupabaseAdmin().from('targets').select('domain, companies_house_number'),
-    getSupabaseAdmin().from('customers').select('organisation_website').eq('account_id', accountId),
-  ]);
+  const admin = getSupabaseAdmin();
+
+  // targets has no account_id — resolve via leads → itp → account_id
+  const { data: itpData } = await admin.from('itp').select('id').eq('account_id', accountId);
+  const itpIds = (itpData ?? []).map(i => i.id);
+
+  let accountTargetDomains = [];
+  let accountTargetCHNumbers = [];
+  if (itpIds.length) {
+    const { data: leadsData } = await admin.from('leads').select('target_id').in('itp_id', itpIds);
+    const targetIds = [...new Set((leadsData ?? []).map(l => l.target_id).filter(Boolean))];
+    if (targetIds.length) {
+      const { data: targetsData } = await admin
+        .from('targets').select('domain, companies_house_number').in('id', targetIds);
+      accountTargetDomains = (targetsData ?? []).map(t => t.domain).filter(Boolean);
+      accountTargetCHNumbers = (targetsData ?? []).map(t => t.companies_house_number).filter(Boolean);
+    }
+  }
+
+  const { data: customersData } = await admin
+    .from('customers').select('organisation_website').eq('account_id', accountId);
+
   return {
-    existingDomains: new Set((targetsRes.data ?? []).map(t => t.domain).filter(Boolean)),
-    existingCHNumbers: new Set((targetsRes.data ?? []).map(t => t.companies_house_number).filter(Boolean)),
-    customerDomains: new Set((customersRes.data ?? []).map(c => c.organisation_website?.toLowerCase()).filter(Boolean)),
+    existingDomains: new Set(accountTargetDomains),
+    existingCHNumbers: new Set(accountTargetCHNumbers),
+    customerDomains: new Set((customersData ?? []).map(c => c.organisation_website?.toLowerCase()).filter(Boolean)),
   };
 }
 

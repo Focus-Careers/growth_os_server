@@ -41,14 +41,32 @@ async function countApprovedLeads(itpId) {
 }
 
 async function buildDedupSets(accountId) {
-  const [targetsRes, customersRes] = await Promise.all([
-    getSupabaseAdmin().from('targets').select('domain, companies_house_number'),
-    getSupabaseAdmin().from('customers').select('organisation_website').eq('account_id', accountId),
-  ]);
+  const admin = getSupabaseAdmin();
+
+  // targets has no account_id — resolve via leads → itp → account_id
+  const { data: itpData } = await admin.from('itp').select('id').eq('account_id', accountId);
+  const itpIds = (itpData ?? []).map(i => i.id);
+
+  let accountTargetDomains = [];
+  let accountTargetCHNumbers = [];
+  if (itpIds.length) {
+    const { data: leadsData } = await admin.from('leads').select('target_id').in('itp_id', itpIds);
+    const targetIds = [...new Set((leadsData ?? []).map(l => l.target_id).filter(Boolean))];
+    if (targetIds.length) {
+      const { data: targetsData } = await admin
+        .from('targets').select('domain, companies_house_number').in('id', targetIds);
+      accountTargetDomains = (targetsData ?? []).map(t => t.domain).filter(Boolean);
+      accountTargetCHNumbers = (targetsData ?? []).map(t => t.companies_house_number).filter(Boolean);
+    }
+  }
+
+  const { data: customersData } = await admin
+    .from('customers').select('organisation_website').eq('account_id', accountId);
+
   return {
-    existingDomains: new Set((targetsRes.data ?? []).map(t => t.domain).filter(Boolean)),
-    existingCHNumbers: new Set((targetsRes.data ?? []).map(t => t.companies_house_number).filter(Boolean)),
-    customerDomains: new Set((customersRes.data ?? []).map(c => c.organisation_website?.toLowerCase()).filter(Boolean)),
+    existingDomains: new Set(accountTargetDomains),
+    existingCHNumbers: new Set(accountTargetCHNumbers),
+    customerDomains: new Set((customersData ?? []).map(c => c.organisation_website?.toLowerCase()).filter(Boolean)),
   };
 }
 
@@ -96,7 +114,17 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
   if (!campaign_id || !enrichResult?.contacts?.length) return;
   const admin = getSupabaseAdmin();
 
-  for (const contact of enrichResult.contacts) {
+  // Filter out contacts already in this campaign to avoid wasted DB writes and API calls
+  const incomingIds = enrichResult.contacts.map(c => c.id);
+  const { data: alreadyIn } = await admin
+    .from('campaign_contacts').select('contact_id')
+    .eq('campaign_id', campaign_id).in('contact_id', incomingIds);
+  const alreadyInSet = new Set((alreadyIn ?? []).map(r => r.contact_id));
+  const newContacts = enrichResult.contacts.filter(c => !alreadyInSet.has(c.id));
+
+  if (!newContacts.length) return;
+
+  for (const contact of newContacts) {
     const { error } = await admin
       .from('campaign_contacts')
       .insert({ campaign_id, contact_id: contact.id })
@@ -105,7 +133,7 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
       console.error('[target_finder_100] campaign_contacts insert error:', error.message);
     }
   }
-  console.log(`[target_finder_100] Added ${enrichResult.contacts.length} contacts to campaign ${campaign_id}`);
+  console.log(`[target_finder_100] Added ${newContacts.length} contacts to campaign ${campaign_id}`);
 
   const { data: campaignRow } = await admin
     .from('campaigns').select('smartlead_campaign_id').eq('id', campaign_id).single();
@@ -113,14 +141,14 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
   if (campaignRow?.smartlead_campaign_id) {
     try {
       const { addLeads } = await import('../../../../config/smartlead.js');
-      const newContactIds = enrichResult.contacts.map(c => c.id);
-      const { data: newContacts } = await admin
+      const newContactIds = newContacts.map(c => c.id);
+      const { data: contactRows } = await admin
         .from('contacts')
         .select('id, first_name, last_name, email, role, phone, linkedin_url, target_id, targets(title, domain, company_location, industry)')
         .in('id', newContactIds);
 
-      if (newContacts?.length) {
-        const slLeads = newContacts.filter(c => c.email).map(c => ({
+      if (contactRows?.length) {
+        const slLeads = contactRows.filter(c => c.email).map(c => ({
           email: c.email,
           first_name: c.first_name ?? '',
           last_name: c.last_name ?? '',
@@ -132,7 +160,7 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
         await addLeads(parseInt(campaignRow.smartlead_campaign_id), slLeads);
 
         const ccIds = [];
-        for (const contact of enrichResult.contacts) {
+        for (const contact of newContacts) {
           const { data: cc } = await admin
             .from('campaign_contacts').select('id')
             .eq('campaign_id', campaign_id).eq('contact_id', contact.id).maybeSingle();
