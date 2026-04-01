@@ -18,48 +18,6 @@ steps:
     sidebar: "select_itp"
     messages:
       - "Perfect. Let's start off by choosing one of your ITP's (ideal target profiles). We'll be finding targets that match this profile."
-    next_id: "check_current_customers"
-
-  - id: "check_current_customers"
-    type: "option_set"
-    messages:
-      - "You currently have {{count_customers_with_account_id}} customers in your current customers database."
-      - "It's important that you update your current customer list so that we don't accidentally identify them as targets - do you want to do that now?"
-    options:
-      - id: 1
-        message: "Yes I'll add more"
-        next_id: "upload_more_customers"
-      - id: 2
-        message: "Nope, I'm happy with the list as is."
-        next_id: "complete"
-
-  - id: "upload_more_customers"
-    type: "option_set"
-    messages:
-      - "What's the best way for you to upload more customers?"
-    options:
-      - id: 1
-        message: "Upload a CSV"
-        next_id: "csv_sidebar"
-      - id: 2
-        message: "Add them manually - one by one"
-        next_id: "manually_sidebar"
-      - id: 3
-        message: "Actually let's continue for now. I'll do this later."
-        next_id: "complete"
-
-  - id: "csv_sidebar"
-    type: "sidebar"
-    sidebar: "target_finder_upload_csv"
-    messages:
-      - "Download the CSV template and add your customers"
-    next_id: "complete"
-
-  - id: "manually_sidebar"
-    type: "sidebar"
-    sidebar: "target_finder_add_manually"
-    messages:
-      - "Add your previous customers here"
     next_id: "complete"
 
   - id: "complete-not-right-now"

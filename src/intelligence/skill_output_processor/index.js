@@ -50,33 +50,25 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
     }
 
     case 'business_analyst/analyse_customers': {
-      if (output.skipped) {
-        // No customers or no ITP — nothing to do, signed_up_first_message already started
-        console.log(`[skill_output] analyse_customers skipped (${output.reason})`);
-        break;
-      } else {
-        // Refined ITP — update the existing ITP record and show for review
-        const itpId = output.itp_id;
-        if (itpId) {
-          await getSupabaseAdmin().from('itp').update({
-            name: output.name ?? null,
-            itp_summary: output.itp_summary ?? null,
-            itp_demographic: output.demographics ?? null,
-            itp_pain_points: output.pain_points ?? null,
-            itp_buying_trigger: output.buying_trigger ?? null,
-            location: output.location ?? null,
-            sic_codes: null, // Clear cached SIC codes so they get regenerated
-          }).eq('id', itpId);
-        }
-        await sendAppMessage({
-          type: 'skill_output',
-          employee,
-          skill: skill_name,
-          user_details_id,
-          sidebar: 'define_itp',
-          output: { ...output, itp_id: itpId },
-        });
+      // Customer profile has been saved to the account table.
+      // Queue signup_ideal_target_profile as a DB safety net, then broadcast it
+      // for immediate pickup. startMobilisation on the frontend clears the queue
+      // item when it runs, preventing double-firing if the user reconnects later.
+      const reason = output.skipped ? ` (skipped: ${output.reason})` : ` (${output.customer_profile?.matched_count ?? 0} matched)`;
+      console.log(`[skill_output] analyse_customers complete${reason}, queueing + broadcasting signup_ideal_target_profile`);
+      const { data: ud } = await getSupabaseAdmin()
+        .from('user_details').select('queued_mobilisations').eq('id', user_details_id).single();
+      const queue = ud?.queued_mobilisations ?? [];
+      if (!queue.some(q => q.mobilisation === 'signup_ideal_target_profile')) {
+        await getSupabaseAdmin().from('user_details').update({
+          queued_mobilisations: [...queue, { mobilisation: 'signup_ideal_target_profile', queued_at: new Date().toISOString() }],
+        }).eq('id', user_details_id);
       }
+      await getSupabaseAdmin().channel(`user:${user_details_id}`).send({
+        type: 'broadcast',
+        event: 'start_mobilisation',
+        payload: { mobilisation: 'signup_ideal_target_profile' },
+      });
       break;
     }
 

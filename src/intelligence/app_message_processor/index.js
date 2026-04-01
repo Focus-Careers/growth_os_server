@@ -14,6 +14,23 @@ import { sendDirectResponse } from '../app_message_sender/index.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const employeesDir = join(__dirname, '../../employees');
 
+async function callClaude(params, retries = 4) {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await getAnthropic().messages.create(params);
+    } catch (err) {
+      const status = err?.status;
+      if ((status === 429 || status === 529) && attempt < retries - 1) {
+        const wait = status === 529 ? 8000 : 60000;
+        console.log(`[amp] ${status} error, waiting ${wait / 1000}s before retry ${attempt + 1}...`);
+        await new Promise(r => setTimeout(r, wait));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
 async function loadSkillDescriptions() {
   const entries = await readdir(employeesDir, { recursive: true });
   const descFiles = entries.filter(e => e.endsWith('description_for_msg_processor.md'));
@@ -31,6 +48,18 @@ async function loadSkillDescriptions() {
   return skills;
 }
 
+async function sendFallbackMessage(user_details_id) {
+  try {
+    await getSupabaseAdmin().from('messages').insert({
+      user_details_id,
+      message_body: "Sorry, I'm having trouble connecting right now. Please send your message again and I'll pick it up.",
+      is_agent: true,
+    });
+  } catch (err) {
+    console.error('[amp] Failed to send fallback message:', err);
+  }
+}
+
 export async function processMessage(record) {
   const { user_details_id } = record;
 
@@ -46,6 +75,7 @@ export async function processMessage(record) {
   if (!userDetails?.signup_complete) return;
   if (userDetails?.active_mobilisation) return;
 
+  try {
   console.log('[amp] loading messages...');
   const { data: history } = await getSupabaseAdmin()
     .from('messages')
@@ -57,6 +87,21 @@ export async function processMessage(record) {
   // Load context about what's already in progress
   const { data: ud } = await getSupabaseAdmin()
     .from('user_details').select('account_id, queued_mobilisations, active_skill').eq('id', user_details_id).single();
+
+  // Short-circuit: if last skill failed and user is asking to retry, re-dispatch it directly
+  if (ud?.active_skill?.failed) {
+    const retryPhrases = ['try again', 'yes', 'yeah', 'yep', 'sure', 'ok', 'okay', 'go ahead', 'retry', 'please', 'do it'];
+    const msg = (record.message_body ?? '').toLowerCase().trim();
+    if (retryPhrases.some(p => msg === p || msg.startsWith(p))) {
+      const { employee, skill } = ud.active_skill;
+      console.log(`[amp] Retry detected — re-dispatching ${employee}/${skill}`);
+      await getSupabaseAdmin().from('user_details').update({ active_skill: null }).eq('id', user_details_id);
+      await sendDirectResponse({ user_details_id, conversationHistory: `User wants to retry the last failed task. Briefly confirm you're trying again. One sentence.` });
+      const { dispatchSkill } = await import('../../employees/index.js');
+      dispatchSkill(employee, skill, { user_details_id }).catch(err => console.error(`[amp] retry dispatch error:`, err));
+      return;
+    }
+  }
 
   let activeContext = '';
   let approvedCount = 0;
@@ -127,7 +172,7 @@ export async function processMessage(record) {
     messages: [{ role: 'user', content: conversationHistory }],
   };
 
-  const response = await getAnthropic().messages.create(claudeRequest);
+  const response = await callClaude(claudeRequest);
 
   const raw = response.content[0].text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
   let decision;
@@ -193,4 +238,8 @@ export async function processMessage(record) {
   }
 
   console.warn('[amp] unknown decision path:', decision.path);
+  } catch (err) {
+    console.error('[amp] processMessage failed after retries:', err);
+    await sendFallbackMessage(user_details_id);
+  }
 }

@@ -14,6 +14,23 @@ import { broadcastTyping } from '../typing_broadcaster/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+async function callClaude(params, retries = 4) {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await getAnthropic().messages.create(params);
+    } catch (err) {
+      const status = err?.status;
+      if ((status === 429 || status === 529) && attempt < retries - 1) {
+        const wait = status === 529 ? 8000 : 60000;
+        console.log(`[app_message_sender] ${status} error, waiting ${wait / 1000}s before retry ${attempt + 1}...`);
+        await new Promise(r => setTimeout(r, wait));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
 const skillPromptMap = {
   'lead_gen_expert/analyse_website': 'analyse_website.md',
   'business_analyst/define_itp': 'define_itp.md',
@@ -28,23 +45,26 @@ const skillPromptMap = {
 export async function sendDirectResponse({ user_details_id, conversationHistory }) {
   await broadcastTyping(user_details_id, true);
 
-  const directResponsePrompt = await readFile(join(__dirname, 'direct_response.md'), 'utf-8');
+  try {
+    const directResponsePrompt = await readFile(join(__dirname, 'direct_response.md'), 'utf-8');
 
-  const response = await getAnthropic().messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 512,
-    system: directResponsePrompt,
-    messages: [{ role: 'user', content: conversationHistory }],
-  });
+    const response = await callClaude({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 512,
+      system: directResponsePrompt,
+      messages: [{ role: 'user', content: conversationHistory }],
+    });
 
-  const message_body = response.content[0].text.trim();
-  await broadcastTyping(user_details_id, false);
+    const message_body = response.content[0].text.trim();
 
-  const { error } = await getSupabaseAdmin()
-    .from('messages')
-    .insert({ user_details_id, message_body, is_agent: true });
+    const { error } = await getSupabaseAdmin()
+      .from('messages')
+      .insert({ user_details_id, message_body, is_agent: true });
 
-  if (error) throw new Error('sendDirectResponse: failed to save message — ' + error.message);
+    if (error) throw new Error('sendDirectResponse: failed to save message — ' + error.message);
+  } finally {
+    await broadcastTyping(user_details_id, false);
+  }
 }
 
 export async function sendAppMessage({ type, employee, skill, user_details_id, sidebar = null, navigate_to = null, output }) {
@@ -61,7 +81,7 @@ export async function sendAppMessage({ type, employee, skill, user_details_id, s
 
   const userMessage = JSON.stringify({ type, employee, skill, output }, null, 2);
 
-  const response = await getAnthropic().messages.create({
+  const response = await callClaude({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 1024,
     system: systemPrompt,

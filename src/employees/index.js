@@ -124,6 +124,7 @@ export async function dispatchSkill(employee, skill, inputs) {
     }
 
     return result;
+
   } catch (err) {
     if (inputs.user_details_id) {
       await broadcastSkillStatus(inputs.user_details_id, {
@@ -134,7 +135,7 @@ export async function dispatchSkill(employee, skill, inputs) {
       });
       await getSupabaseAdmin()
         .from('user_details')
-        .update({ active_skill: null })
+        .update({ active_skill: { employee, skill, failed: true } })
         .eq('id', inputs.user_details_id);
 
       // Send a Watson error message so the user knows what happened
