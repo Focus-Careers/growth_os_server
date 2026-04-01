@@ -62,7 +62,10 @@ ${contextLines}`;
 
     let messages;
     try {
-      messages = JSON.parse(raw);
+      // Strip markdown code fences and extract the JSON array
+      const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+      const match = stripped.match(/\[[\s\S]*\]/);
+      messages = JSON.parse(match ? match[0] : stripped);
       if (!Array.isArray(messages) || messages.length < 2) throw new Error('unexpected shape');
     } catch {
       // Fallback: treat the whole response as a single message
