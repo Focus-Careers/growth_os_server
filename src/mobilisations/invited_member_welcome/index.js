@@ -1,17 +1,25 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { getAnthropic } from '../../config/anthropic.js';
 
+async function broadcastTyping(supabase, user_details_id, typing) {
+  await supabase.channel(`user:${user_details_id}`).send({
+    type: 'broadcast', event: 'agent_typing', payload: { typing },
+  }).catch(() => {});
+}
+
+async function insertMessage(supabase, user_details_id, message_body) {
+  await supabase.from('messages').insert({ user_details_id, message_body, is_agent: true });
+}
+
 // Runs in the background after the welcome step is returned.
-// Fetches account data, calls Haiku, posts the result as a real-time message.
+// Fetches account data, calls Haiku, posts two messages with a typing gap between them.
 async function generateAndPostStatus(user_details_id, account_id) {
   const supabase = getSupabaseAdmin();
 
   // Brief pause so the welcome message renders before typing dots appear
   await new Promise(r => setTimeout(r, 1500));
 
-  await supabase.channel(`user:${user_details_id}`).send({
-    type: 'broadcast', event: 'agent_typing', payload: { typing: true },
-  });
+  await broadcastTyping(supabase, user_details_id, true);
 
   try {
     const [{ data: account }, { data: itps }, { count: campaignCount }] = await Promise.all([
@@ -33,39 +41,48 @@ async function generateAndPostStatus(user_details_id, account_id) {
       `Campaigns running: ${campaignCount ?? 0}`,
     ].filter(Boolean).join('\n');
 
-    const prompt = `You are Watson, an AI growth coordinator for a GrowthOS workspace. A new team member has just joined. Write them a short welcome message (3-5 sentences):
-1. Introduce yourself as Watson, their AI growth coordinator
-2. Briefly describe who the company is targeting (use the target profile name and summarise who they are in plain English)
-3. State the current position (approved leads, campaigns running) with the specific numbers
-4. End with one clear, specific suggestion for what they should do next
+    const prompt = `You are Watson, an AI growth coordinator inside GrowthOS. A new team member has just joined this workspace. Write exactly two messages, returned as a JSON array of two strings.
 
-Be warm but direct. No sign-off. No bullet points — write in flowing sentences.
+Message 1: Introduce yourself as Watson and describe who the company is targeting. Do NOT open with "welcome" or any greeting — dive straight into who you are and what the team is working on. Describe the target profile in plain English (not just the name). Keep it to 2-3 sentences.
+
+Message 2: State the current pipeline position using the specific numbers (approved leads, campaigns running). Then give one clear, specific suggestion for what the new member should do next — this must be something GrowthOS can actually do. The available actions are: ask Watson to find more leads, ask Watson to refine the target profile, ask Watson to create a campaign, explore and approve leads in Belfort, set up or launch a campaign in Draper, analyse customers in Warren. Reference the relevant agent or feature by name. Keep it to 2-3 sentences.
+
+Be warm but direct. No sign-off. No bullet points. Return only the JSON array — no other text.
 
 Context:
 ${contextLines}`;
 
     const response = await getAnthropic().messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 200,
+      max_tokens: 300,
       messages: [{ role: 'user', content: prompt }],
     });
 
-    const statusMessage = response.content[0].text.trim();
+    const raw = response.content[0].text.trim();
 
-    await supabase.channel(`user:${user_details_id}`).send({
-      type: 'broadcast', event: 'agent_typing', payload: { typing: false },
-    });
+    let messages;
+    try {
+      messages = JSON.parse(raw);
+      if (!Array.isArray(messages) || messages.length < 2) throw new Error('unexpected shape');
+    } catch {
+      // Fallback: treat the whole response as a single message
+      messages = [raw];
+    }
 
-    await supabase.from('messages').insert({
-      user_details_id,
-      message_body: statusMessage,
-      is_agent: true,
-    });
+    // Post first message
+    await broadcastTyping(supabase, user_details_id, false);
+    await insertMessage(supabase, user_details_id, messages[0]);
+
+    if (messages[1]) {
+      // Gap before second message
+      await new Promise(r => setTimeout(r, 1200));
+      await broadcastTyping(supabase, user_details_id, true);
+      await new Promise(r => setTimeout(r, 1800));
+      await broadcastTyping(supabase, user_details_id, false);
+      await insertMessage(supabase, user_details_id, messages[1]);
+    }
   } catch (err) {
-    // Clear typing indicator even on error
-    await supabase.channel(`user:${user_details_id}`).send({
-      type: 'broadcast', event: 'agent_typing', payload: { typing: false },
-    }).catch(() => {});
+    await broadcastTyping(supabase, user_details_id, false);
     throw err;
   }
 }

@@ -197,6 +197,11 @@ router.post('/members/update-role', async (req, res) => {
       .from('user_details').select('role, account_id').eq('id', user_details_id).single();
     if (requester?.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
 
+    // Guard: can't demote yourself
+    if (user_details_id === target_user_details_id && new_role === 'member') {
+      return res.status(400).json({ error: 'You cannot demote yourself' });
+    }
+
     // Guard: can't demote the last admin
     if (new_role === 'member') {
       const { count } = await supabase
