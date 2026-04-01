@@ -16,7 +16,7 @@ async function generateAndPostStatus(user_details_id, account_id) {
   try {
     const [{ data: account }, { data: itps }, { count: campaignCount }] = await Promise.all([
       supabase.from('account').select('organisation_name, organisation_website, description').eq('id', account_id).single(),
-      supabase.from('itp').select('id, name').eq('account_id', account_id),
+      supabase.from('itp').select('id, name, itp_summary').eq('account_id', account_id),
       supabase.from('campaigns').select('id', { count: 'exact', head: true }).eq('account_id', account_id),
     ]);
 
@@ -24,23 +24,29 @@ async function generateAndPostStatus(user_details_id, account_id) {
       const { count } = await supabase
         .from('leads').select('id', { count: 'exact', head: true })
         .eq('itp_id', itp.id).eq('approved', true);
-      return `"${itp.name}" — ${count ?? 0} approved leads`;
+      return `"${itp.name}" (${count ?? 0} approved leads) — ${itp.itp_summary ?? 'no description'}`;
     }));
 
     const contextLines = [
       account?.description ? `What they do: ${account.description}` : null,
-      itpSummaries.length > 0 ? `Target profiles: ${itpSummaries.join(', ')}` : 'No target profiles yet',
-      `Campaigns: ${campaignCount ?? 0} set up`,
+      itpSummaries.length > 0 ? `Target profiles:\n${itpSummaries.map(s => `- ${s}`).join('\n')}` : 'No target profiles yet',
+      `Campaigns running: ${campaignCount ?? 0}`,
     ].filter(Boolean).join('\n');
 
-    const prompt = `You are Watson, a sharp AI growth coordinator writing to a new team member who just joined this GrowthOS workspace. Write 2-3 short sentences: first, the current status (use the specific numbers), then one clear suggestion for what they should do next. Be direct and specific. No greeting, no sign-off, no fluff.
+    const prompt = `You are Watson, an AI growth coordinator for a GrowthOS workspace. A new team member has just joined. Write them a short welcome message (3-5 sentences):
+1. Introduce yourself as Watson, their AI growth coordinator
+2. Briefly describe who the company is targeting (use the target profile name and summarise who they are in plain English)
+3. State the current position (approved leads, campaigns running) with the specific numbers
+4. End with one clear, specific suggestion for what they should do next
+
+Be warm but direct. No sign-off. No bullet points — write in flowing sentences.
 
 Context:
 ${contextLines}`;
 
     const response = await getAnthropic().messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 120,
+      max_tokens: 200,
       messages: [{ role: 'user', content: prompt }],
     });
 
