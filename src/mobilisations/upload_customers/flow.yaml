@@ -4,10 +4,9 @@ start_id: "intro"
 steps:
   - id: "intro"
     messages:
-      - "Great, thank you {{user_first_name}}.
-      - One last thing - having up-to-date knowledge of the customers or clients that already work with you really helps our employees get an idea of how to find new ones."
-      - "It also means we don't accidentally market to your current clients."
-      - "You can either upload a CSV, or just add your current customers one by one. By the way — you can always do this later."
+      - "Great, thank you {{user_first_name}}."
+      - "Having up-to-date knowledge of your existing customers really helps our team find new ones — and makes sure we don't accidentally target people who already work with you."
+      - "You can upload a CSV, add customers one by one, or skip this for now."
     type: "option_set"
     options:
       - id: 1
@@ -32,7 +31,7 @@ steps:
 
   - id: "complete"
     messages:
-      - "Awesome. {{user_first_name}}, we're all set for now."
+      - "Perfect. Leave it with us."
     type: "end_flow"
 
 on_complete:
@@ -42,4 +41,13 @@ on_complete:
       match_value: "@user_details_id"
       set:
         signup_complete: true
-  mobilisation: "signed_up_first_message"
+  condition:
+    step: "intro"
+    value: "Do it later"
+    negate: true
+    on_fail:
+      broadcast_mobilisation: "signup_ideal_target_profile"
+      queue_mobilisation: "signup_ideal_target_profile"
+  employee: "business_analyst"
+  skill: "analyse_customers"
+  inputs: {}

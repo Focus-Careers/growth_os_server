@@ -79,9 +79,32 @@ export async function completeMobilisation(mobilisationName, responses, messages
   }
 
   if (on_complete.condition) {
-    const { step, value } = on_complete.condition;
-    console.log(`[completeMobilisation] condition check: responses["${step}"] = "${responses[step]}" vs "${value}" → ${responses[step] === value ? 'PASS' : 'FAIL'}`);
-    if (responses[step] !== value) return null;
+    const { step, value, negate, on_fail } = on_complete.condition;
+    const matches = responses[step] === value;
+    const conditionFailed = negate ? matches : !matches;
+    console.log(`[completeMobilisation] condition check: responses["${step}"] = "${responses[step]}" vs "${value}" (negate=${!!negate}) → ${conditionFailed ? 'FAIL' : 'PASS'}`);
+    if (conditionFailed) {
+      if (on_fail && user_details_id) {
+        if (on_fail.queue_mobilisation) {
+          const { data: ud } = await getSupabaseAdmin()
+            .from('user_details').select('queued_mobilisations').eq('id', user_details_id).single();
+          const queue = ud?.queued_mobilisations ?? [];
+          if (!queue.some(q => q.mobilisation === on_fail.queue_mobilisation)) {
+            await getSupabaseAdmin().from('user_details').update({
+              queued_mobilisations: [...queue, { mobilisation: on_fail.queue_mobilisation, queued_at: new Date().toISOString() }],
+            }).eq('id', user_details_id);
+          }
+        }
+        if (on_fail.broadcast_mobilisation) {
+          await getSupabaseAdmin().channel(`user:${user_details_id}`).send({
+            type: 'broadcast',
+            event: 'start_mobilisation',
+            payload: { mobilisation: on_fail.broadcast_mobilisation },
+          });
+        }
+      }
+      return null;
+    }
   }
 
   if (on_complete.mobilisation) {
