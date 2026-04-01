@@ -287,7 +287,7 @@ router.post('/invite/accept', async (req, res) => {
     // Validate token
     const { data: invite, error: ie } = await supabase
       .from('invites')
-      .select('id, account_id, status, expires_at')
+      .select('id, account_id, status, expires_at, invited_by')
       .eq('token', token)
       .single();
 
@@ -297,6 +297,12 @@ router.post('/invite/accept', async (req, res) => {
       await supabase.from('invites').update({ status: 'expired' }).eq('id', invite.id);
       return res.status(400).json({ error: 'Invite has expired' });
     }
+
+    // Fetch inviter name for the landing screen
+    const { data: inviter } = invite.invited_by
+      ? await supabase.from('user_details').select('firstname').eq('id', invite.invited_by).single()
+      : { data: null };
+    const inviter_firstname = inviter?.firstname ?? null;
 
     // Check if already a member
     const { data: existing } = await supabase
@@ -317,6 +323,7 @@ router.post('/invite/accept', async (req, res) => {
         account_name: account?.organisation_name ?? null,
         website: account?.organisation_website ?? null,
         role: existing.role,
+        inviter_firstname,
       });
     }
 
@@ -357,6 +364,7 @@ router.post('/invite/accept', async (req, res) => {
       website: account?.organisation_website ?? null,
       role: newUd.role,
       firstname: newUd.firstname,
+      inviter_firstname,
     });
   } catch (err) {
     console.error('[user/invite/accept]', err);
