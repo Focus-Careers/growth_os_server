@@ -315,14 +315,14 @@ router.post('/invite/accept', async (req, res) => {
       });
     }
 
-    // Get firstname: existing user_details first, then auth metadata (set by invite signup form)
+    // Fetch auth user for email + metadata firstname
+    const { data: authUser } = await supabase.auth.admin.getUserById(auth_id);
+    const email = authUser?.user?.email ?? null;
+
+    // Firstname: prefer existing user_details row, fall back to auth metadata
     const { data: existingUd } = await supabase
       .from('user_details').select('firstname').eq('auth_id', auth_id).limit(1).single();
-    let firstname = existingUd?.firstname ?? null;
-    if (!firstname) {
-      const { data: authUser } = await supabase.auth.admin.getUserById(auth_id);
-      firstname = authUser?.user?.user_metadata?.firstname ?? null;
-    }
+    const firstname = existingUd?.firstname ?? authUser?.user?.user_metadata?.firstname ?? null;
 
     // Create user_details for the invitee on the shared account
     const { data: newUd, error: ude } = await supabase
@@ -333,6 +333,7 @@ router.post('/invite/accept', async (req, res) => {
         signup_complete: true,
         role: 'member',
         firstname,
+        email,
       })
       .select('id, account_id, role, firstname')
       .single();

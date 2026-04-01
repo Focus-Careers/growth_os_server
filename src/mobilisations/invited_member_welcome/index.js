@@ -1,12 +1,74 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { getAnthropic } from '../../config/anthropic.js';
 
+// Runs in the background after the welcome step is returned.
+// Fetches account data, calls Haiku, posts the result as a real-time message.
+async function generateAndPostStatus(user_details_id, account_id) {
+  const supabase = getSupabaseAdmin();
+
+  // Brief pause so the welcome message renders before typing dots appear
+  await new Promise(r => setTimeout(r, 1500));
+
+  await supabase.channel(`user:${user_details_id}`).send({
+    type: 'broadcast', event: 'agent_typing', payload: { typing: true },
+  });
+
+  try {
+    const [{ data: account }, { data: itps }, { count: campaignCount }] = await Promise.all([
+      supabase.from('account').select('organisation_name, organisation_website, description').eq('id', account_id).single(),
+      supabase.from('itp').select('id, name').eq('account_id', account_id),
+      supabase.from('campaigns').select('id', { count: 'exact', head: true }).eq('account_id', account_id),
+    ]);
+
+    const itpSummaries = await Promise.all((itps ?? []).map(async itp => {
+      const { count } = await supabase
+        .from('leads').select('id', { count: 'exact', head: true })
+        .eq('itp_id', itp.id).eq('approved', true);
+      return `"${itp.name}" — ${count ?? 0} approved leads`;
+    }));
+
+    const contextLines = [
+      account?.description ? `What they do: ${account.description}` : null,
+      itpSummaries.length > 0 ? `Target profiles: ${itpSummaries.join(', ')}` : 'No target profiles yet',
+      `Campaigns: ${campaignCount ?? 0} set up`,
+    ].filter(Boolean).join('\n');
+
+    const prompt = `You are Watson, a sharp AI growth coordinator writing to a new team member who just joined this GrowthOS workspace. Write 2-3 short sentences: first, the current status (use the specific numbers), then one clear suggestion for what they should do next. Be direct and specific. No greeting, no sign-off, no fluff.
+
+Context:
+${contextLines}`;
+
+    const response = await getAnthropic().messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 120,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const statusMessage = response.content[0].text.trim();
+
+    await supabase.channel(`user:${user_details_id}`).send({
+      type: 'broadcast', event: 'agent_typing', payload: { typing: false },
+    });
+
+    await supabase.from('messages').insert({
+      user_details_id,
+      message_body: statusMessage,
+      is_agent: true,
+    });
+  } catch (err) {
+    // Clear typing indicator even on error
+    await supabase.channel(`user:${user_details_id}`).send({
+      type: 'broadcast', event: 'agent_typing', payload: { typing: false },
+    }).catch(() => {});
+    throw err;
+  }
+}
+
 export default async function invitedMemberWelcome(messages, context = {}) {
   const user_details_id = context.user_details_id ?? null;
 
   let firstname = '';
   let orgName = 'your company';
-  let companyStatus = "I'll fill you in on where things stand as you settle in.";
 
   if (user_details_id) {
     const { data: ud } = await getSupabaseAdmin()
@@ -18,62 +80,13 @@ export default async function invitedMemberWelcome(messages, context = {}) {
     firstname = ud?.firstname ?? '';
 
     if (ud?.account_id) {
-      const accountId = ud.account_id;
-
-      const [{ data: account }, { data: itps }] = await Promise.all([
-        getSupabaseAdmin()
-          .from('account')
-          .select('organisation_name, organisation_website, description')
-          .eq('id', accountId)
-          .single(),
-        getSupabaseAdmin()
-          .from('itp')
-          .select('id, name')
-          .eq('account_id', accountId),
-      ]);
-
+      const { data: account } = await getSupabaseAdmin()
+        .from('account').select('organisation_name').eq('id', ud.account_id).single();
       orgName = account?.organisation_name ?? 'your company';
 
-      // Approved lead counts per ITP
-      const itpSummaries = await Promise.all((itps ?? []).map(async itp => {
-        const { count } = await getSupabaseAdmin()
-          .from('leads')
-          .select('id', { count: 'exact', head: true })
-          .eq('itp_id', itp.id)
-          .eq('approved', true);
-        return `"${itp.name}" — ${count ?? 0} approved leads`;
-      }));
-
-      const { count: campaignCount } = await getSupabaseAdmin()
-        .from('campaigns')
-        .select('id', { count: 'exact', head: true })
-        .eq('account_id', accountId);
-
-      const contextLines = [
-        `Company: ${orgName}`,
-        account?.organisation_website ? `Website: ${account.organisation_website}` : null,
-        account?.description ? `What they do: ${account.description}` : null,
-        itpSummaries.length > 0
-          ? `Target profiles: ${itpSummaries.join(', ')}`
-          : 'No target profiles built yet',
-        `Campaigns: ${campaignCount ?? 0} set up`,
-      ].filter(Boolean).join('\n');
-
-      try {
-        const prompt = `You are Watson, a sharp and direct AI growth coordinator. A new team member has just joined this company's GrowthOS workspace. Write 2-3 sentences giving them a quick sense of where things currently stand — what's been built, what's in motion, what's next. Be specific and use the data below. Write in Watson's voice: confident, warm, no fluff. Address them directly as "you".
-
-Company context:
-${contextLines}`;
-
-        const response = await getAnthropic().messages.create({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 200,
-          messages: [{ role: 'user', content: prompt }],
-        });
-        companyStatus = response.content[0].text.trim();
-      } catch (err) {
-        console.error('[invited_member_welcome] Haiku error:', err);
-      }
+      // Fire status generation in background — don't await
+      generateAndPostStatus(user_details_id, ud.account_id)
+        .catch(err => console.error('[invited_member_welcome] status error:', err));
     }
   }
 
@@ -82,12 +95,7 @@ ${contextLines}`;
   return {
     id: 'welcome',
     type: 'end_flow',
-    messages: [
-      `${greeting}, welcome to ${orgName} on GrowthOS.`,
-      `Here's who you're working with. I'm Watson — I set the strategy and keep everything coordinated. Belfort is your lead gen expert; he searches the web for companies that match your ideal target profile, scores them, and finds contact details. Warren is the business analyst — he digs into your customer base, spots patterns, and keeps your targeting sharp. Draper runs your outbound campaigns: email sequences, sending schedules, reply tracking. And Pepper handles the admin layer — account settings, team management, senders, all of that.`,
-      companyStatus,
-      `Take a look around. I'm here whenever you need me.`,
-    ],
+    messages: [`${greeting}, welcome to ${orgName} on GrowthOS.`],
     options: null,
     next_id: null,
     response_key: null,
