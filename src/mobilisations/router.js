@@ -25,11 +25,12 @@ router.post('/step', async (req, res) => {
 // Returns the first step of the mobilisation without going through Claude.
 router.post('/start', async (req, res) => {
   try {
-    const { mobilisation, user_details_id } = req.body;
+    const { mobilisation, user_details_id, start_step } = req.body;
     if (!mobilisation) {
       return res.status(400).json({ error: 'mobilisation is required' });
     }
-    const step = await triggerMobilisation(mobilisation, []);
+    const context = { user_details_id: user_details_id ?? null, start_step: start_step ?? null };
+    const step = await triggerMobilisation(mobilisation, [], context);
     if (user_details_id && step) {
       await getSupabaseAdmin()
         .from('user_details')

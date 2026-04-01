@@ -13,6 +13,17 @@ steps:
         message: "Sounds great!"
     next_id: "ask_org_website"
 
+  - id: "welcome_returning"
+    messages:
+      - "Hey {{user_first_name}}, let's start creating your new company — you know the drill."
+      - "We have a little bit more work to do to get you set up. Firstly, I need some basic details about your organisation - and then I'll work with you to establish an ideal target profile, to establish who you actually want to market to."
+      - "Sound good?"
+    type: "option_set"
+    options:
+      - id: 1
+        message: "Sounds great!"
+    next_id: "ask_org_website"
+
   - id: "ask_org_website"
     messages:
       - "Firstly, if it's OK could I grab your organisation's website?"
