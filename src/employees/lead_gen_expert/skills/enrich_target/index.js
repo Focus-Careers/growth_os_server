@@ -8,6 +8,38 @@ import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const DUMMY_EMAIL_DOMAINS = new Set([
+  'example.com', 'example.org', 'example.net',
+  'test.com', 'test.org', 'testing.com',
+  'sample.com', 'email.com',
+  'mailinator.com', 'guerrillamail.com', 'tempmail.com',
+  'yopmail.com', 'fakeinbox.com', 'maildrop.cc', 'spam4.me',
+  'placeholder.com', 'dummy.com', 'noemail.com',
+]);
+
+const DUMMY_EMAIL_LOCALS = new Set([
+  'sample', 'test', 'placeholder', 'dummy', 'fake',
+  'noreply', 'no-reply', 'donotreply', 'do-not-reply',
+  'example', 'user', 'email', 'mail', 'none',
+]);
+
+const DUMMY_FULL_NAMES = new Set([
+  'john doe', 'jane doe', 'john smith', 'jane smith',
+  'sample user', 'test user', 'first last', 'full name',
+  'your name', 'contact name', 'person name', 'first name last name',
+]);
+
+function isDummyContact(email, firstName, lastName) {
+  if (!email) return false;
+  const [local, domain] = email.toLowerCase().split('@');
+  if (!domain) return false;
+  if (DUMMY_EMAIL_DOMAINS.has(domain)) return true;
+  if (DUMMY_EMAIL_LOCALS.has(local)) return true;
+  const fullName = `${(firstName ?? '').trim()} ${(lastName ?? '').trim()}`.toLowerCase().trim();
+  if (fullName && DUMMY_FULL_NAMES.has(fullName)) return true;
+  return false;
+}
+
 /**
  * Enriches a target (company) with data from Apollo, website scraping, and Claude extraction.
  *
@@ -185,6 +217,12 @@ export async function executeSkill({ target_id, user_details_id, silent = true }
     // Skip if still no email
     if (!email) {
       console.log(`[enrich_target] No email for ${person.first_name ?? 'unknown'} ${person.last_name ?? ''} — skipping`);
+      continue;
+    }
+
+    // Skip dummy/placeholder contacts
+    if (isDummyContact(email, person.first_name, person.last_name)) {
+      console.log(`[enrich_target] Skipping dummy contact: ${person.first_name ?? ''} ${person.last_name ?? ''} <${email}>`);
       continue;
     }
 
