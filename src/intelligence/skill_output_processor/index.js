@@ -51,10 +51,19 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
 
     case 'business_analyst/analyse_customers': {
       // Customer profile has been saved to the account table.
-      // Broadcast start_mobilisation so the frontend kicks off signup_ideal_target_profile,
-      // which will run define_itp with the customer data already in place.
+      // Queue signup_ideal_target_profile as a DB safety net, then broadcast it
+      // for immediate pickup. startMobilisation on the frontend clears the queue
+      // item when it runs, preventing double-firing if the user reconnects later.
       const reason = output.skipped ? ` (skipped: ${output.reason})` : ` (${output.customer_profile?.matched_count ?? 0} matched)`;
-      console.log(`[skill_output] analyse_customers complete${reason}, broadcasting signup_ideal_target_profile`);
+      console.log(`[skill_output] analyse_customers complete${reason}, queueing + broadcasting signup_ideal_target_profile`);
+      const { data: ud } = await getSupabaseAdmin()
+        .from('user_details').select('queued_mobilisations').eq('id', user_details_id).single();
+      const queue = ud?.queued_mobilisations ?? [];
+      if (!queue.some(q => q.mobilisation === 'signup_ideal_target_profile')) {
+        await getSupabaseAdmin().from('user_details').update({
+          queued_mobilisations: [...queue, { mobilisation: 'signup_ideal_target_profile', queued_at: new Date().toISOString() }],
+        }).eq('id', user_details_id);
+      }
       await getSupabaseAdmin().channel(`user:${user_details_id}`).send({
         type: 'broadcast',
         event: 'start_mobilisation',
