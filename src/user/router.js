@@ -1,13 +1,16 @@
 // -------------------------------------------------------------------------
 // USER ROUTER
-// Endpoints for multi-company support — listing and creating company
-// workspaces for a single auth user.
+// Endpoints for multi-company and multi-user support.
 // -------------------------------------------------------------------------
 
 import { Router } from 'express';
 import { getSupabaseAdmin } from '../config/supabase.js';
 
 const router = Router();
+
+const APP_URL = process.env.APP_URL || 'http://localhost:5173';
+
+// ── Companies ─────────────────────────────────────────────────────────────
 
 // POST /api/user/companies — list all user_details for an auth user, joined with account
 router.post('/companies', async (req, res) => {
@@ -17,14 +20,13 @@ router.post('/companies', async (req, res) => {
 
     const { data: rows, error } = await getSupabaseAdmin()
       .from('user_details')
-      .select('id, firstname, signup_complete, active_mobilisation, active_step_id, account_id')
+      .select('id, firstname, signup_complete, active_mobilisation, active_step_id, account_id, role')
       .eq('auth_id', auth_id)
       .order('created_at', { ascending: true });
 
     if (error) return res.status(500).json({ error: error.message });
     if (!rows || rows.length === 0) return res.json({ companies: [] });
 
-    // Fetch account names for all distinct account_ids
     const accountIds = [...new Set(rows.map(r => r.account_id).filter(Boolean))];
     const { data: accounts } = await getSupabaseAdmin()
       .from('account')
@@ -49,7 +51,7 @@ router.post('/companies', async (req, res) => {
 // POST /api/user/companies/create — create a new user_details + account for the same auth user
 router.post('/companies/create', async (req, res) => {
   try {
-    const { auth_id } = req.body;
+    const { auth_id, firstname } = req.body;
     if (!auth_id) return res.status(400).json({ error: 'auth_id required' });
 
     const { data: account, error: ae } = await getSupabaseAdmin()
@@ -59,23 +61,17 @@ router.post('/companies/create', async (req, res) => {
       .single();
     if (ae) return res.status(500).json({ error: ae.message });
 
-    const { firstname } = req.body;
-
     const { data: ud, error: ude } = await getSupabaseAdmin()
       .from('user_details')
-      .insert({ auth_id, account_id: account.id, firstname: firstname ?? null })
-      .select('id, firstname, signup_complete, active_mobilisation, active_step_id, account_id')
+      .insert({ auth_id, account_id: account.id, firstname: firstname ?? null, role: 'admin' })
+      .select('id, firstname, signup_complete, active_mobilisation, active_step_id, account_id, role')
       .single();
     if (ude) return res.status(500).json({ error: ude.message });
 
     res.json({
       user_details_id: ud.id,
       account_id: account.id,
-      company: {
-        ...ud,
-        account_name: null,
-        website: null,
-      },
+      company: { ...ud, account_name: null, website: null },
     });
   } catch (err) {
     console.error('[user/companies/create]', err);
@@ -83,7 +79,7 @@ router.post('/companies/create', async (req, res) => {
   }
 });
 
-// POST /api/user/companies/delete — delete a company workspace and all its data
+// POST /api/user/companies/delete — delete a company workspace and all its data (admin only)
 router.post('/companies/delete', async (req, res) => {
   try {
     const { user_details_id, auth_id } = req.body;
@@ -91,49 +87,242 @@ router.post('/companies/delete', async (req, res) => {
 
     const supabase = getSupabaseAdmin();
 
-    // Guard: don't allow deleting the last company
+    // Guard: admin only
+    const { data: requester } = await supabase
+      .from('user_details').select('role, account_id').eq('id', user_details_id).single();
+    if (requester?.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+
+    // Guard: can't delete last company
     const { count } = await supabase
-      .from('user_details')
-      .select('id', { count: 'exact', head: true })
-      .eq('auth_id', auth_id);
+      .from('user_details').select('id', { count: 'exact', head: true }).eq('auth_id', auth_id);
     if (count <= 1) return res.status(400).json({ error: 'Cannot delete your only company' });
 
-    // Get the account_id for this user_details row
-    const { data: ud } = await supabase
-      .from('user_details')
-      .select('account_id')
-      .eq('id', user_details_id)
-      .single();
-    if (!ud) return res.status(404).json({ error: 'Company not found' });
+    const accountId = requester.account_id;
 
-    const accountId = ud.account_id;
-
-    // Delete in dependency order
-    await supabase.from('messages').delete().eq('user_details_id', user_details_id);
+    // Delete all user_details for this account (and their messages)
+    const { data: allMembers } = await supabase
+      .from('user_details').select('id').eq('account_id', accountId);
+    for (const m of allMembers ?? []) {
+      await supabase.from('messages').delete().eq('user_details_id', m.id);
+    }
 
     if (accountId) {
-      // Get ITP IDs to delete leads
       const { data: itps } = await supabase.from('itp').select('id').eq('account_id', accountId);
       const itpIds = (itps ?? []).map(i => i.id);
-      if (itpIds.length > 0) {
-        await supabase.from('leads').delete().in('itp_id', itpIds);
-      }
-
+      if (itpIds.length > 0) await supabase.from('leads').delete().in('itp_id', itpIds);
       await supabase.from('itp').delete().eq('account_id', accountId);
       await supabase.from('campaigns').delete().eq('account_id', accountId);
       await supabase.from('customers').delete().eq('account_id', accountId);
       await supabase.from('senders').delete().eq('account_id', accountId);
+      await supabase.from('invites').delete().eq('account_id', accountId);
     }
 
-    await supabase.from('user_details').delete().eq('id', user_details_id);
-
-    if (accountId) {
-      await supabase.from('account').delete().eq('id', accountId);
-    }
+    await supabase.from('user_details').delete().eq('account_id', accountId);
+    if (accountId) await supabase.from('account').delete().eq('id', accountId);
 
     res.json({ deleted: true });
   } catch (err) {
     console.error('[user/companies/delete]', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── Members ───────────────────────────────────────────────────────────────
+
+// POST /api/user/members — list all members for an account
+router.post('/members', async (req, res) => {
+  try {
+    const { account_id } = req.body;
+    if (!account_id) return res.status(400).json({ error: 'account_id required' });
+
+    const { data: members, error } = await getSupabaseAdmin()
+      .from('user_details')
+      .select('id, auth_id, firstname, role')
+      .eq('account_id', account_id)
+      .order('created_at', { ascending: true });
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    // Fetch emails from auth
+    const enriched = await Promise.all((members ?? []).map(async m => {
+      const { data: authUser } = await getSupabaseAdmin().auth.admin.getUserById(m.auth_id);
+      return { ...m, email: authUser?.user?.email ?? null };
+    }));
+
+    res.json({ members: enriched });
+  } catch (err) {
+    console.error('[user/members]', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/user/members/update-role — promote or demote a member (admin only)
+router.post('/members/update-role', async (req, res) => {
+  try {
+    const { user_details_id, target_user_details_id, new_role } = req.body;
+    if (!user_details_id || !target_user_details_id || !new_role) {
+      return res.status(400).json({ error: 'user_details_id, target_user_details_id, new_role required' });
+    }
+    if (!['admin', 'member'].includes(new_role)) return res.status(400).json({ error: 'Invalid role' });
+
+    const supabase = getSupabaseAdmin();
+    const { data: requester } = await supabase
+      .from('user_details').select('role, account_id').eq('id', user_details_id).single();
+    if (requester?.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+
+    // Guard: can't demote the last admin
+    if (new_role === 'member') {
+      const { count } = await supabase
+        .from('user_details')
+        .select('id', { count: 'exact', head: true })
+        .eq('account_id', requester.account_id)
+        .eq('role', 'admin');
+      if (count <= 1) return res.status(400).json({ error: 'Cannot demote the last admin' });
+    }
+
+    await supabase.from('user_details').update({ role: new_role }).eq('id', target_user_details_id);
+    res.json({ updated: true });
+  } catch (err) {
+    console.error('[user/members/update-role]', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/user/members/remove — remove a member (admin only)
+router.post('/members/remove', async (req, res) => {
+  try {
+    const { user_details_id, target_user_details_id } = req.body;
+    if (!user_details_id || !target_user_details_id) {
+      return res.status(400).json({ error: 'user_details_id and target_user_details_id required' });
+    }
+
+    const supabase = getSupabaseAdmin();
+    const { data: requester } = await supabase
+      .from('user_details').select('role, account_id').eq('id', user_details_id).single();
+    if (requester?.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+
+    // Can't remove yourself
+    if (user_details_id === target_user_details_id) {
+      return res.status(400).json({ error: 'Cannot remove yourself' });
+    }
+
+    await supabase.from('messages').delete().eq('user_details_id', target_user_details_id);
+    await supabase.from('user_details').delete().eq('id', target_user_details_id);
+    res.json({ removed: true });
+  } catch (err) {
+    console.error('[user/members/remove]', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── Invites ───────────────────────────────────────────────────────────────
+
+// POST /api/user/invite/generate — create a single-use invite link (admin only)
+router.post('/invite/generate', async (req, res) => {
+  try {
+    const { user_details_id } = req.body;
+    if (!user_details_id) return res.status(400).json({ error: 'user_details_id required' });
+
+    const supabase = getSupabaseAdmin();
+    const { data: requester } = await supabase
+      .from('user_details').select('role, account_id').eq('id', user_details_id).single();
+    if (requester?.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+
+    const { data: invite, error } = await supabase
+      .from('invites')
+      .insert({ account_id: requester.account_id, invited_by: user_details_id })
+      .select('token, expires_at')
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const link = `${APP_URL}?invite=${invite.token}`;
+    res.json({ link, expires_at: invite.expires_at });
+  } catch (err) {
+    console.error('[user/invite/generate]', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/user/invite/accept — accept an invite token
+router.post('/invite/accept', async (req, res) => {
+  try {
+    const { token, auth_id } = req.body;
+    if (!token || !auth_id) return res.status(400).json({ error: 'token and auth_id required' });
+
+    const supabase = getSupabaseAdmin();
+
+    // Validate token
+    const { data: invite, error: ie } = await supabase
+      .from('invites')
+      .select('id, account_id, status, expires_at')
+      .eq('token', token)
+      .single();
+
+    if (ie || !invite) return res.status(404).json({ error: 'Invite not found' });
+    if (invite.status !== 'pending') return res.status(400).json({ error: 'Invite already used or expired' });
+    if (new Date(invite.expires_at) < new Date()) {
+      await supabase.from('invites').update({ status: 'expired' }).eq('id', invite.id);
+      return res.status(400).json({ error: 'Invite has expired' });
+    }
+
+    // Check if already a member
+    const { data: existing } = await supabase
+      .from('user_details')
+      .select('id, account_id, role')
+      .eq('auth_id', auth_id)
+      .eq('account_id', invite.account_id)
+      .single();
+
+    if (existing) {
+      await supabase.from('invites').update({ status: 'accepted' }).eq('id', invite.id);
+      const { data: account } = await supabase
+        .from('account').select('organisation_name, organisation_website').eq('id', invite.account_id).single();
+      return res.json({
+        already_member: true,
+        user_details_id: existing.id,
+        account_id: invite.account_id,
+        account_name: account?.organisation_name ?? null,
+        website: account?.organisation_website ?? null,
+        role: existing.role,
+      });
+    }
+
+    // Get firstname from their existing user_details if available
+    const { data: existingUd } = await supabase
+      .from('user_details').select('firstname').eq('auth_id', auth_id).limit(1).single();
+
+    // Create user_details for the invitee on the shared account
+    const { data: newUd, error: ude } = await supabase
+      .from('user_details')
+      .insert({
+        auth_id,
+        account_id: invite.account_id,
+        signup_complete: true,
+        role: 'member',
+        firstname: existingUd?.firstname ?? null,
+      })
+      .select('id, account_id, role, firstname')
+      .single();
+
+    if (ude) return res.status(500).json({ error: ude.message });
+
+    // Mark invite accepted (single-use)
+    await supabase.from('invites').update({ status: 'accepted' }).eq('id', invite.id);
+
+    const { data: account } = await supabase
+      .from('account').select('organisation_name, organisation_website').eq('id', invite.account_id).single();
+
+    res.json({
+      user_details_id: newUd.id,
+      account_id: invite.account_id,
+      account_name: account?.organisation_name ?? null,
+      website: account?.organisation_website ?? null,
+      role: newUd.role,
+      firstname: newUd.firstname,
+    });
+  } catch (err) {
+    console.error('[user/invite/accept]', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

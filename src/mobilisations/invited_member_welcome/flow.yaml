@@ -1,0 +1,10 @@
+name: "invited_member_welcome"
+start_id: "welcome"
+
+steps:
+  - id: "welcome"
+    type: "end_flow"
+    messages:
+      - "Welcome to {{organisation_name}}."
+      - "I'm Watson — I coordinate everything here. You've been added as a team member."
+      - "Feel free to ask me anything about the account, or take a look around."

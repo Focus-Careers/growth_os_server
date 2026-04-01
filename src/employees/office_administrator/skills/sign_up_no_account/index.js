@@ -56,6 +56,7 @@ export async function executeSkill({ firstname, email, messages = [] }) {
       email: email.toLowerCase(),
       auth_id: newUser.user.id,
       account_id: newAccount.id,
+      role: 'admin',
     })
     .select('id')
     .single();
