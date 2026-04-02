@@ -92,6 +92,18 @@ export async function dispatchSkill(employee, skill, inputs) {
   const sidebarMessage = skillSidebarMessages[key] ?? `Working...`;
 
   if (inputs.user_details_id) {
+    // Idempotency guard: skip if this exact skill is already running (started within last 5 mins)
+    const { data: currentUd } = await getSupabaseAdmin()
+      .from('user_details').select('active_skill').eq('id', inputs.user_details_id).single();
+    const as = currentUd?.active_skill;
+    if (as && as.employee === employee && as.skill === skill && !as.failed) {
+      const ageMs = Date.now() - new Date(as.started_at).getTime();
+      if (ageMs < 5 * 60 * 1000) {
+        console.log(`[dispatchSkill] ${key} already running (started ${Math.round(ageMs / 1000)}s ago) — skipping duplicate dispatch`);
+        return;
+      }
+    }
+
     await broadcastSkillStatus(inputs.user_details_id, {
       employee,
       skill,
