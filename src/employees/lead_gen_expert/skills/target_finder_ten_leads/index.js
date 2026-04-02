@@ -445,14 +445,19 @@ export async function executeSkill({ user_details_id, itp_id }) {
     console.log(`[target_finder] Step 3: ${chResults.length} found, ${filtered.length} after pre-filter`);
 
     if (filtered.length > 0) {
+      // Calculate how many more we need at the point Step 3 starts
+      const countBeforeStep3 = await countHighScoreLeads(itp.id);
+      const neededInStep3 = Math.max(0, dynamicTarget - countBeforeStep3);
       let created = 0;
+
       for (let i = 0; i < filtered.length; i += CH_BATCH_SIZE) {
+        if (created >= neededInStep3) break;
         const batch = filtered.slice(i, i + CH_BATCH_SIZE);
         await sendProgress(user_details_id, 'Belfort is scoring companies...', 85 + Math.round((i / filtered.length) * 5));
         const scores = await scoreStructuredBatch(batch, fillTemplate, structuredScoreTemplate, buyerContext);
 
         for (const item of scores) {
-          if (initialHighScoreCount + created >= dynamicTarget - initialHighScoreCount) break;
+          if (created >= neededInStep3) break;
           const company = batch[item.index];
           if (!company || (item.score ?? 0) < HIGH_SCORE_THRESHOLD) continue;
           await createLeadFromCH(company, item.score, item.reason, itp, userDetails.account_id, user_details_id, dedupSets);
