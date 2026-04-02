@@ -9,7 +9,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { getSupabase } from '../../config/supabase.js';
+import { getSupabaseAdmin } from '../../config/supabase.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -40,7 +40,7 @@ export async function sendSignupResponse(messages) {
 
   const replyText = response.content[0].text.trim();
 
-  await getSupabase().from('signup_sender_logs').insert({
+  await getSupabaseAdmin().from('signup_sender_logs').insert({
     timestamp: new Date().toISOString(),
     request: { messages: claudeMessages, system: corePrompt },
     response: { reply: replyText },

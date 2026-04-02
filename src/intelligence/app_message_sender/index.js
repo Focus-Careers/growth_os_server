@@ -68,31 +68,35 @@ export async function sendDirectResponse({ user_details_id, conversationHistory 
 }
 
 export async function sendAppMessage({ type, employee, skill, user_details_id, sidebar = null, navigate_to = null, output }) {
-  await broadcastTyping(user_details_id, true)
+  await broadcastTyping(user_details_id, true);
 
-  const corePrompt = await readFile(join(__dirname, 'core_prompt.md'), 'utf-8');
+  try {
+    const corePrompt = await readFile(join(__dirname, 'core_prompt.md'), 'utf-8');
 
-  const skillPromptFile = skillPromptMap[`${employee}/${skill}`];
-  const skillPrompt = skillPromptFile
-    ? await readFile(join(__dirname, skillPromptFile), 'utf-8')
-    : null;
+    const skillPromptFile = skillPromptMap[`${employee}/${skill}`];
+    const skillPrompt = skillPromptFile
+      ? await readFile(join(__dirname, skillPromptFile), 'utf-8')
+      : null;
 
-  const systemPrompt = skillPrompt ? `${corePrompt}\n\n---\n\n${skillPrompt}` : corePrompt;
+    const systemPrompt = skillPrompt ? `${corePrompt}\n\n---\n\n${skillPrompt}` : corePrompt;
 
-  const userMessage = JSON.stringify({ type, employee, skill, output }, null, 2);
+    const userMessage = JSON.stringify({ type, employee, skill, output }, null, 2);
 
-  const response = await callClaude({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 1024,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: userMessage }],
-  });
+    const response = await callClaude({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+    });
 
-  const message_body = response.content[0].text.trim();
+    const message_body = response.content[0].text.trim();
 
-  const { error } = await getSupabaseAdmin()
-    .from('messages')
-    .insert({ user_details_id, message_body, is_agent: true, sidebar, sidebar_info: sidebar ? output : null, navigate_to });
+    const { error } = await getSupabaseAdmin()
+      .from('messages')
+      .insert({ user_details_id, message_body, is_agent: true, sidebar, sidebar_info: sidebar ? output : null, navigate_to });
 
-  if (error) throw new Error('app_message_sender: failed to save message — ' + error.message);
+    if (error) throw new Error('app_message_sender: failed to save message — ' + error.message);
+  } finally {
+    await broadcastTyping(user_details_id, false);
+  }
 }

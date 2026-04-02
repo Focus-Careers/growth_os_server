@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { getSupabase } from '../../config/supabase.js';
+import { getSupabaseAdmin } from '../../config/supabase.js';
 import { triggerMobilisation } from '../../mobilisations/index.js';
 import { sendSignupResponse } from '../signup_message_sender/index.js';
 
@@ -53,7 +53,7 @@ export async function processSignup(req, res) {
     const raw = response.content[0].text.trim();
     const result = JSON.parse(raw);
 
-    await getSupabase().from('signup_processor_logs').insert({
+    await getSupabaseAdmin().from('signup_processor_logs').insert({
       timestamp: new Date().toISOString(),
       request: { messages: claudeMessages, system: systemPrompt },
       response: result,

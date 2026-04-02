@@ -113,9 +113,11 @@ export async function dispatchSkill(employee, skill, inputs) {
       persist: !skillsWithProgress.has(key),
     });
     // Track active skill in DB so we can detect incomplete runs on return
+    // Save inputs (excluding messages/large fields) so retry can reproduce the original call
+    const { user_details_id: _uid, messages: _msgs, ...savedInputs } = inputs;
     await getSupabaseAdmin()
       .from('user_details')
-      .update({ active_skill: { employee, skill, started_at: new Date().toISOString() } })
+      .update({ active_skill: { employee, skill, started_at: new Date().toISOString(), inputs: savedInputs } })
       .eq('id', inputs.user_details_id);
   }
 

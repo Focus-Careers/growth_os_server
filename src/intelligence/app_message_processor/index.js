@@ -93,12 +93,12 @@ export async function processMessage(record) {
     const retryPhrases = ['try again', 'yes', 'yeah', 'yep', 'sure', 'ok', 'okay', 'go ahead', 'retry', 'please', 'do it'];
     const msg = (record.message_body ?? '').toLowerCase().trim();
     if (retryPhrases.some(p => msg === p || msg.startsWith(p))) {
-      const { employee, skill } = ud.active_skill;
+      const { employee, skill, inputs: savedInputs } = ud.active_skill;
       console.log(`[amp] Retry detected — re-dispatching ${employee}/${skill}`);
       await getSupabaseAdmin().from('user_details').update({ active_skill: null }).eq('id', user_details_id);
       await sendDirectResponse({ user_details_id, conversationHistory: `User wants to retry the last failed task. Briefly confirm you're trying again. One sentence.` });
       const { dispatchSkill } = await import('../../employees/index.js');
-      dispatchSkill(employee, skill, { user_details_id }).catch(err => console.error(`[amp] retry dispatch error:`, err));
+      dispatchSkill(employee, skill, { ...(savedInputs ?? {}), user_details_id }).catch(err => console.error(`[amp] retry dispatch error:`, err));
       return;
     }
   }
