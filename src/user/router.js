@@ -19,9 +19,9 @@ router.post('/login', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'email required' });
 
     const supabase = getSupabaseAdmin();
-    const { data: { users } } = await supabase.auth.admin.listUsers();
-    const existing = users?.find(u => u.email === email.toLowerCase().trim());
-    if (!existing) return res.status(404).json({ error: 'No account found with this email.' });
+    // Check if user exists via user_details (avoids listUsers pagination issues)
+    const { data: existingUser } = await supabase.from('user_details').select('id').eq('email', email.toLowerCase().trim()).maybeSingle();
+    if (!existingUser) return res.status(404).json({ error: 'No account found with this email.' });
 
     const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
       type: 'magiclink',
@@ -419,18 +419,19 @@ router.post('/invite/create-auth-user', async (req, res) => {
     if (invite.status !== 'pending') return res.status(400).json({ error: 'This invite has already been used.' });
     if (new Date(invite.expires_at) < new Date()) return res.status(400).json({ error: 'This invite has expired.' });
 
-    // Check email not already registered
-    const { data: existingUsers } = await supabase.auth.admin.listUsers();
-    const alreadyExists = existingUsers?.users?.some(u => u.email === email.toLowerCase().trim());
-    if (alreadyExists) return res.status(409).json({ error: 'user_exists' });
-
     // Create auth user only (firstname stored in metadata for use at invite/accept)
-    const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
+    // If the email is already registered, createUser returns an error we surface as user_exists
+    const { error: createError } = await supabase.auth.admin.createUser({
       email: email.toLowerCase().trim(),
       user_metadata: { firstname: firstname?.trim() ?? '' },
       email_confirm: true,
     });
-    if (createError) return res.status(500).json({ error: createError.message });
+    if (createError) {
+      if (createError.message?.toLowerCase().includes('already registered') || createError.code === 'email_exists') {
+        return res.status(409).json({ error: 'user_exists' });
+      }
+      return res.status(500).json({ error: createError.message });
+    }
 
     // Generate magic link — user clicks it to log in, invite token processes on return
     const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({

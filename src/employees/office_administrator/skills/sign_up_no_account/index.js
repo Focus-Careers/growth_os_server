@@ -14,16 +14,9 @@ export async function executeSkill({ firstname, email, messages = [] }) {
 
   const admin = getSupabaseAdmin();
 
-  const { data: existingUsers, error: listError } = await admin.auth.admin.listUsers();
-  if (listError) {
-    console.error('sign_up_no_account: listUsers error:', listError);
-    return { error: 'internal_error' };
-  }
-
-  const alreadyExists = existingUsers.users.some(u => u.email === email.toLowerCase());
-  if (alreadyExists) {
-    return { error: 'user_exists' };
-  }
+  // Check if email already exists in user_details (fast, no pagination issues)
+  const { data: existingUser } = await admin.from('user_details').select('id').eq('email', email.toLowerCase()).maybeSingle();
+  if (existingUser) return { error: 'user_exists' };
 
   const { data: newUser, error: createError } = await admin.auth.admin.createUser({
     email: email.toLowerCase(),
@@ -82,7 +75,7 @@ export async function executeSkill({ firstname, email, messages = [] }) {
     }
   }
 
-  // Generate magic link to log the user straight into the app
+  // Generate magic link (returned to client for direct login)
   const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
     type: 'magiclink',
     email: email.toLowerCase(),

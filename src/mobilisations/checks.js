@@ -18,8 +18,9 @@ export const checks = {
   },
 
   email_exists: async (value) => {
-    const { data, error } = await getSupabaseAdmin().auth.admin.listUsers();
+    const { data, error } = await getSupabaseAdmin()
+      .from('user_details').select('id').eq('email', value.toLowerCase()).maybeSingle();
     if (error) throw new Error('email_exists check failed: ' + error.message);
-    return !data.users.some(u => u.email === value.toLowerCase());
+    return !data; // true = email is free (passes validation)
   },
 };

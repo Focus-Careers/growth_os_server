@@ -176,17 +176,19 @@ export async function processMessage(record) {
 
   const raw = response.content[0].text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
   let decision;
+  let parseError = null;
   try {
     decision = JSON.parse(raw);
-  } catch (parseError) {
-    console.error('[amp] Failed to parse Claude response as JSON:', parseError.message, '| raw text:', raw);
+  } catch (err) {
+    parseError = err;
+    console.error(`[amp] Failed to parse Claude response as JSON for user ${user_details_id}:`, err.message, '| raw text:', raw);
     decision = { path: 'direct_response' };
   }
 
   await getSupabaseAdmin().from('app_message_processor_logs').insert({
     user_details_id,
     request: { messages: claudeRequest.messages, system: claudeRequest.system },
-    response: decision,
+    response: parseError ? { path: 'direct_response', _parse_error: true, _raw: raw.slice(0, 1000) } : decision,
   });
 
   console.log('app_message_processor decision:', decision);
