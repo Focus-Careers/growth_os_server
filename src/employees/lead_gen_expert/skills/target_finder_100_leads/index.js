@@ -97,7 +97,7 @@ async function scoreStructuredBatch(companies, fillTemplate, structuredScoreTemp
   });
 
   const scoreResponse = await callClaude({
-    model: 'claude-sonnet-4-6', max_tokens: 4096,
+    model: 'claude-haiku-4-5-20251001', max_tokens: 1024,
     messages: [{ role: 'user', content: scorePrompt }],
   });
 
@@ -403,7 +403,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
     }).join('\n\n');
 
     const scorePrompt = scorePromptBase.replace('{{hybrid_companies}}', targetsList);
-    const scoreRes = await callClaude({ model: 'claude-sonnet-4-6', max_tokens: 1024, messages: [{ role: 'user', content: scorePrompt }] });
+    const scoreRes = await callClaude({ model: 'claude-haiku-4-5-20251001', max_tokens: 1024, messages: [{ role: 'user', content: scorePrompt }] });
 
     let scores = [];
     try {
@@ -557,7 +557,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
 
             const targetsList = `[0] Title: ${org.name ?? 'N/A'}\nURL: https://${domain}\nSnippet: ${org.short_description ?? ''}`;
             const sp = fillTemplate(hybridScoreTemplate, { '{{buyer_context}}': buyerContext }).replace('{{hybrid_companies}}', targetsList);
-            const sr = await callClaude({ model: 'claude-sonnet-4-6', max_tokens: 256, messages: [{ role: 'user', content: sp }] });
+            const sr = await callClaude({ model: 'claude-haiku-4-5-20251001', max_tokens: 256, messages: [{ role: 'user', content: sp }] });
 
             let score = 0, reason = '';
             try {
