@@ -14,8 +14,8 @@ import { searchCompanies as searchCH, getCompanyProfile } from '../../../../conf
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HIGH_SCORE_THRESHOLD = 70;
 const TARGET_LEAD_COUNT = 100;
-const CH_BATCH_SIZE = 20;
-const MAX_SERPER_ITERATIONS = 200;
+const CH_BATCH_SIZE = 40;
+const MAX_SERPER_ITERATIONS = 50;
 const APOLLO_COMPANY_SEARCH_ENABLED = process.env.APOLLO_COMPANY_SEARCH_ENABLED === 'true';
 
 async function callClaude(params, retries = 3) {
@@ -327,9 +327,55 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
   }
 
   // ================================================================
-  // STEP 2: Targeted Google Search (good quality, free)
+  // STEP 2: CH Broad Search (backfill before trying Google)
   // ================================================================
-  console.log('[target_finder_100] === STEP 2: Targeted Google Search ===');
+  console.log('[target_finder_100] === STEP 2: CH Broad Search ===');
+
+  try {
+    const chResults = await searchCompaniesHouseForItp({
+      itp,
+      existingDomains: dedupSets.existingDomains,
+      existingCHNumbers: dedupSets.existingCHNumbers,
+      customerDomains: dedupSets.customerDomains,
+    });
+
+    const filtered = chResults.filter(c => {
+      const reason = shouldSkipCompany(c, searchProfile);
+      if (reason) console.log(`[target_finder_100] Pre-filter skip: ${c.companyName} — ${reason}`);
+      return !reason;
+    });
+    console.log(`[target_finder_100] Step 2: ${chResults.length} found, ${filtered.length} after pre-filter`);
+
+    if (filtered.length > 0) {
+      for (let i = 0; i < filtered.length; i += CH_BATCH_SIZE) {
+        const batch = filtered.slice(i, i + CH_BATCH_SIZE);
+        console.log(`[target_finder_100] Step 2 scoring batch ${Math.floor(i / CH_BATCH_SIZE) + 1}`);
+        const scores = await scoreStructuredBatch(batch, fillTemplate, structuredScoreTemplate, buyerContext);
+
+        for (const item of scores) {
+          const company = batch[item.index];
+          if (!company || (item.score ?? 0) < HIGH_SCORE_THRESHOLD) continue;
+          await createLeadFromCH(company, item.score, item.reason, itp, userDetails.account_id, user_details_id, campaign_id, dedupSets);
+        }
+
+        const count = await countApprovedLeads(itp.id);
+        if (count >= targetCount) break;
+      }
+    }
+  } catch (err) {
+    console.error('[target_finder_100] Step 2 error:', err.message);
+  }
+
+  {
+    const count = await countApprovedLeads(itp.id);
+    console.log(`[target_finder_100] After Step 2: ${count}/${targetCount}`);
+    if (count >= targetCount) return finalize(itp, user_details_id, targetCount);
+  }
+
+  // ================================================================
+  // STEP 3: Targeted Google Search (fallback if CH alone not enough)
+  // ================================================================
+  console.log('[target_finder_100] === STEP 3: Targeted Google Search ===');
 
   const scorePromptBase = fillTemplate(hybridScoreTemplate, { '{{buyer_context}}': buyerContext });
 
@@ -487,48 +533,8 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
 
   {
     const count = await countApprovedLeads(itp.id);
-    console.log(`[target_finder_100] After Step 2: ${count}/${targetCount}`);
+    console.log(`[target_finder_100] After Step 3: ${count}/${targetCount}`);
     if (count >= targetCount) return finalize(itp, user_details_id, targetCount);
-  }
-
-  // ================================================================
-  // STEP 3: CH Broad Search (backfill)
-  // ================================================================
-  console.log('[target_finder_100] === STEP 3: CH Broad Search ===');
-
-  try {
-    const chResults = await searchCompaniesHouseForItp({
-      itp,
-      existingDomains: dedupSets.existingDomains,
-      existingCHNumbers: dedupSets.existingCHNumbers,
-      customerDomains: dedupSets.customerDomains,
-    });
-
-    const filtered = chResults.filter(c => {
-      const reason = shouldSkipCompany(c, searchProfile);
-      if (reason) console.log(`[target_finder_100] Pre-filter skip: ${c.companyName} — ${reason}`);
-      return !reason;
-    });
-    console.log(`[target_finder_100] Step 3: ${chResults.length} found, ${filtered.length} after pre-filter`);
-
-    if (filtered.length > 0) {
-      for (let i = 0; i < filtered.length; i += CH_BATCH_SIZE) {
-        const batch = filtered.slice(i, i + CH_BATCH_SIZE);
-        console.log(`[target_finder_100] Step 3 scoring batch ${Math.floor(i / CH_BATCH_SIZE) + 1}`);
-        const scores = await scoreStructuredBatch(batch, fillTemplate, structuredScoreTemplate, buyerContext);
-
-        for (const item of scores) {
-          const company = batch[item.index];
-          if (!company || (item.score ?? 0) < HIGH_SCORE_THRESHOLD) continue;
-          await createLeadFromCH(company, item.score, item.reason, itp, userDetails.account_id, user_details_id, campaign_id, dedupSets);
-        }
-
-        const count = await countApprovedLeads(itp.id);
-        if (count >= targetCount) break;
-      }
-    }
-  } catch (err) {
-    console.error('[target_finder_100] Step 3 error:', err.message);
   }
 
   // ================================================================
