@@ -82,9 +82,14 @@ export async function searchCompaniesHouseForItp({ itp, existingDomains, existin
 
   console.log(`[ch_search] Searching CH with SIC codes: ${sicCodes.join(', ')} | location: ${itp.location ?? 'UK'}`);
 
+  // "Anywhere in the UK" means no location filter — don't pass it to CH or it returns 404
+  const locationParam = (itp.location && itp.location.toLowerCase() !== 'anywhere in the uk')
+    ? itp.location
+    : undefined;
+
   const searchResult = await searchCompanies({
     sicCodes,
-    location: itp.location ?? undefined,
+    location: locationParam,
   });
 
   const items = searchResult.items ?? [];
