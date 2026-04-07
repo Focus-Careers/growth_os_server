@@ -82,7 +82,7 @@ export async function processMessage(record) {
     .select('message_body, is_agent')
     .eq('user_details_id', user_details_id)
     .order('created_at', { ascending: true })
-    .limit(50);
+    .limit(10);
 
   // Load context about what's already in progress
   const { data: ud } = await getSupabaseAdmin()
@@ -149,7 +149,11 @@ export async function processMessage(record) {
     `## ${employee} / ${skill}\n${content}`
   ).join('\n\n');
 
-  const systemPrompt = `${decisionPrompt}\n\n${skillsSection}${activeContext}`;
+  // Static portion (decision logic + skill list) is cached; dynamic context is a separate block
+  const systemBlocks = [
+    { type: 'text', text: `${decisionPrompt}\n\n${skillsSection}`, cache_control: { type: 'ephemeral' } },
+  ];
+  if (activeContext) systemBlocks.push({ type: 'text', text: activeContext });
 
   // Build conversation history — last 10 messages for context, with the actual user message highlighted
   const recentHistory = (history ?? []).slice(-10);
@@ -166,9 +170,9 @@ export async function processMessage(record) {
   console.log('[amp] LATEST USER MESSAGE:', userMessage);
 
   const claudeRequest = {
-    model: 'claude-sonnet-4-6',
+    model: 'claude-haiku-4-5-20251001',
     max_tokens: 256,
-    system: systemPrompt,
+    system: systemBlocks,
     messages: [{ role: 'user', content: conversationHistory }],
   };
 

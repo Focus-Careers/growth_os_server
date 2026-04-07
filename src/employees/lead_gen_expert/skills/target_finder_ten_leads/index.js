@@ -16,7 +16,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const HIGH_SCORE_THRESHOLD = 70;
 const TARGET_HIGH_SCORE_COUNT = 10;
 const MAX_SERPER_ITERATIONS = 20;
-const CH_BATCH_SIZE = 20;
+const CH_BATCH_SIZE = 40;
 const APOLLO_COMPANY_SEARCH_ENABLED = process.env.APOLLO_COMPANY_SEARCH_ENABLED === 'true';
 
 async function callClaude(params, retries = 3) {
