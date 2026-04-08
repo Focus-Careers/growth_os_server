@@ -22,6 +22,14 @@ const BLOCKED_DOMAINS = new Set([
   'bizdb.co.uk', 'businessmad.com', 'checkfree.co.uk', 'britishlei.co.uk',
   'pappers.co.uk', 'bringo.co.uk', 'gladiatorbusiness.co.uk', 'tinytax.co.uk',
   'theconstructionindex.co.uk', 'tradesmanregistry.co.uk',
+  // Round 3 blocklist additions (caught in prod logs 2026-04-08)
+  'northdata.de', 'companiesintheuk.co.uk', 'vat-search.co.uk', 'ceoemail.com',
+  'pomanda.com', 'procurement.co.uk', 'doogal.co.uk', 'tandlonline.com',
+  'reportingaccounts.com', 'companydex.co.uk', 'uk.globaldatabase.com',
+  '1stdirectory.co.uk', 'nextdoor.co.uk', 'addressesandpostcodes.co.uk',
+  'companypulse.co.uk', 'vat-lookup.co.uk', 'ukphonebook.com', 'creditsafe.com',
+  'wastebook.co.uk', 'search.infobelpro.com', 'stratfordiq.com', 'datalog.co.uk',
+  'scoriff.co.uk', 'secret-bases.co.uk', 'amazonaws.com',
 ]);
 
 // Suffix matches — blocks any subdomain (e.g. open.endole.co.uk, gb.kompass.com)
