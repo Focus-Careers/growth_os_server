@@ -29,7 +29,7 @@ const BLOCKED_DOMAINS = new Set([
   '1stdirectory.co.uk', 'nextdoor.co.uk', 'addressesandpostcodes.co.uk',
   'companypulse.co.uk', 'vat-lookup.co.uk', 'ukphonebook.com', 'creditsafe.com',
   'wastebook.co.uk', 'search.infobelpro.com', 'stratfordiq.com', 'datalog.co.uk',
-  'scoriff.co.uk', 'secret-bases.co.uk', 'amazonaws.com',
+  'scoriff.co.uk', 'secret-bases.co.uk', 'amazonaws.com', 'streetguide.co.uk',
 ]);
 
 // Suffix matches — blocks any subdomain (e.g. open.endole.co.uk, gb.kompass.com)
