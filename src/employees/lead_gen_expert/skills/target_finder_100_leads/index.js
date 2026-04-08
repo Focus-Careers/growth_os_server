@@ -14,7 +14,7 @@ import { searchCompanies as searchCH, getCompanyProfile } from '../../../../conf
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HIGH_SCORE_THRESHOLD = 70;
 const TARGET_LEAD_COUNT = 100;
-const CH_BATCH_SIZE = 40;
+const CH_BATCH_SIZE = 20;
 const MAX_SERPER_ITERATIONS = 50;
 const APOLLO_COMPANY_SEARCH_ENABLED = process.env.APOLLO_COMPANY_SEARCH_ENABLED === 'true';
 
@@ -105,7 +105,8 @@ async function scoreStructuredBatch(companies, fillTemplate, structuredScoreTemp
     const raw = scoreResponse.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
     return JSON.parse(raw);
   } catch {
-    console.error('[target_finder_100] Failed to parse scores');
+    const preview = scoreResponse.content[0]?.text?.slice(0, 300) ?? '(empty)';
+    console.error(`[target_finder_100] Failed to parse scores. Response preview: ${preview}`);
     return [];
   }
 }
@@ -157,7 +158,12 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
           custom_fields: { job_title: c.role ?? '', industry: c.targets?.industry ?? '' },
         }));
 
-        await addLeads(parseInt(campaignRow.smartlead_campaign_id), slLeads);
+        const slCampaignId = parseInt(campaignRow.smartlead_campaign_id);
+        if (isNaN(slCampaignId)) {
+          console.warn(`[target_finder_100] smartlead_campaign_id "${campaignRow.smartlead_campaign_id}" is not a valid integer — skipping Smartlead push`);
+          return;
+        }
+        await addLeads(slCampaignId, slLeads);
 
         const ccIds = [];
         for (const contact of newContacts) {
