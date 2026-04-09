@@ -10,10 +10,11 @@ import { isDomainBlocked, resolveDomain } from '../target_finder_ten_leads/domai
 import { buildSearchProfile } from '../target_finder_ten_leads/build_search_profile.js';
 import { shouldSkipCompany } from '../target_finder_ten_leads/company_filter.js';
 import { searchCompanies as searchCH, getCompanyProfile } from '../../../../config/companies_house.js';
+import { enrichCompany } from '../../../../config/apollo.js';
 import { openRun, increment, closeRun } from '../../../../lib/cost_tracker.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const HIGH_SCORE_THRESHOLD = 60;
+const HIGH_SCORE_THRESHOLD = 50;
 const TARGET_LEAD_COUNT = 100;
 const CH_BATCH_SIZE = 20;
 const MAX_SERPER_ITERATIONS = 50;
@@ -82,15 +83,58 @@ function buildBuyerContext(searchProfile) {
   return parts.length > 0 ? parts.join(' ') : '';
 }
 
+/**
+ * Resolve domain + Apollo company enrichment for all candidates before scoring.
+ * Deduplicates against existing domains so we don't spend Apollo credits on companies
+ * we already have. Returns only companies that should proceed to scoring.
+ */
+async function preEnrichForScoring(companies, dedupSets) {
+  const results = [];
+  for (const company of companies) {
+    const domain = await resolveDomain(company.companyName, company.location);
+
+    if (domain) {
+      if (dedupSets.existingDomains.has(domain) || dedupSets.customerDomains.has(domain)) {
+        console.log(`[target_finder_100] Pre-enrich dedup: ${company.companyName} — ${domain} already seen`);
+        continue;
+      }
+    }
+
+    let apolloData = null;
+    if (domain) {
+      try {
+        apolloData = await enrichCompany(domain);
+      } catch (err) {
+        console.error(`[target_finder_100] Pre-enrich Apollo error for ${company.companyName}:`, err.message);
+      }
+    }
+
+    results.push({ ...company, domain: domain ?? null, apolloData });
+  }
+  return results;
+}
+
 async function scoreStructuredBatch(companies, fillTemplate, structuredScoreTemplate, buyerContext) {
-  const structuredList = companies.map((c, i) =>
-    `[${i}] Company: "${c.companyName}" (${c.domain ?? 'no website'})\n` +
-    `    Industry (SIC): ${c.sicDescription}\n` +
-    `    Location: ${c.location ?? 'Unknown'}\n` +
-    `    Founded: ${c.dateOfCreation ?? 'Unknown'}\n` +
-    `    Officers: ${c.officers?.map(o => `${o.first_name ?? ''} ${o.last_name ?? ''} (${o.role ?? 'unknown role'})`).join(', ') || 'None listed'}\n` +
-    `    Company Number: ${c.companyNumber}`
-  ).join('\n\n');
+  const structuredList = companies.map((c, i) => {
+    let entry =
+      `[${i}] Company: "${c.companyName}" (${c.domain ?? 'no website'})\n` +
+      `    Industry (SIC): ${c.sicDescription}\n` +
+      `    Location: ${c.location ?? 'Unknown'}\n` +
+      `    Founded: ${c.dateOfCreation ?? 'Unknown'}\n` +
+      `    Officers: ${c.officers?.map(o => `${o.first_name ?? ''} ${o.last_name ?? ''} (${o.role ?? 'unknown role'})`).join(', ') || 'None listed'}\n` +
+      `    Company Number: ${c.companyNumber}`;
+    if (c.apolloData) {
+      const a = c.apolloData;
+      const parts = [];
+      if (a.short_description) parts.push(`Description: ${a.short_description}`);
+      if (a.industry) parts.push(`Industry: ${a.industry}`);
+      if (a.estimated_num_employees) parts.push(`Employees: ~${a.estimated_num_employees}`);
+      if (a.annual_revenue_printed) parts.push(`Revenue: ${a.annual_revenue_printed}`);
+      if (a.country) parts.push(`Country: ${a.country}`);
+      if (parts.length) entry += '\n    Apollo: ' + parts.join(' | ');
+    }
+    return entry;
+  }).join('\n\n');
 
   const scorePrompt = fillTemplate(structuredScoreTemplate, {
     '{{structured_companies}}': structuredList,
@@ -187,16 +231,13 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
 async function createLeadFromCH(chCompany, score, reason, itp, accountId, user_details_id, campaign_id, dedupSets) {
   const admin = getSupabaseAdmin();
 
-  // Resolve domain post-scoring — only companies that passed the threshold reach here,
-  // so Serper credits are spent on genuinely promising candidates only.
-  const domain = await resolveDomain(chCompany.companyName, chCompany.location);
+  // Domain already resolved in preEnrichForScoring — no Serper call needed here.
+  const domain = chCompany.domain ?? null;
 
-  // Dedup check on resolved domain
-  if (domain) {
-    if (dedupSets.existingDomains.has(domain) || dedupSets.customerDomains.has(domain)) {
-      console.log(`[target_finder_100] Skipping ${chCompany.companyName} — domain ${domain} already seen`);
-      return;
-    }
+  // Dedup double-check (in case state changed since pre-enrichment)
+  if (domain && (dedupSets.existingDomains.has(domain) || dedupSets.customerDomains.has(domain))) {
+    console.log(`[target_finder_100] Skipping ${chCompany.companyName} — domain ${domain} already seen`);
+    return;
   }
 
   const { data: newTarget, error } = await admin.from('targets').insert({
@@ -329,9 +370,13 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
       await increment(runId, { ch_companies_found: chResults.length, ch_companies_after_filter: filtered.length });
 
       if (filtered.length > 0) {
+        console.log(`[target_finder_100] Step 1: pre-enriching ${filtered.length} companies for scoring...`);
+        const enriched = await preEnrichForScoring(filtered, dedupSets);
+        await increment(runId, { serper_calls_used: filtered.length }); // 1 Serper call per company for domain resolution
+
         const allScored = [];
-        for (let i = 0; i < filtered.length; i += CH_BATCH_SIZE) {
-          const batch = filtered.slice(i, i + CH_BATCH_SIZE);
+        for (let i = 0; i < enriched.length; i += CH_BATCH_SIZE) {
+          const batch = enriched.slice(i, i + CH_BATCH_SIZE);
           console.log(`[target_finder_100] Step 1 scoring batch ${Math.floor(i / CH_BATCH_SIZE) + 1}`);
           const scores = await scoreStructuredBatch(batch, fillTemplate, structuredScoreTemplate, buyerContext);
           await increment(runId, { haiku_calls_used: 1 });
@@ -376,8 +421,12 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
     await increment(runId, { ch_companies_found: chResults.length, ch_companies_after_filter: filtered.length });
 
     if (filtered.length > 0) {
-      for (let i = 0; i < filtered.length; i += CH_BATCH_SIZE) {
-        const batch = filtered.slice(i, i + CH_BATCH_SIZE);
+      console.log(`[target_finder_100] Step 2: pre-enriching ${filtered.length} companies for scoring...`);
+      const enriched = await preEnrichForScoring(filtered, dedupSets);
+      await increment(runId, { serper_calls_used: filtered.length });
+
+      for (let i = 0; i < enriched.length; i += CH_BATCH_SIZE) {
+        const batch = enriched.slice(i, i + CH_BATCH_SIZE);
         console.log(`[target_finder_100] Step 2 scoring batch ${Math.floor(i / CH_BATCH_SIZE) + 1}`);
         const scores = await scoreStructuredBatch(batch, fillTemplate, structuredScoreTemplate, buyerContext);
         await increment(runId, { haiku_calls_used: 1 });
@@ -435,6 +484,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
     // Skip results that are clearly not company homepages
     const JUNK_TITLE_PATTERNS = /^\[pdf\]|^\[doc\]|catalogue|brochure|directory|magazine|journal|news|wikipedia|linkedin\.com|facebook\.com|twitter\.com|instagram\.com|youtube\.com/i;
 
+    const seenInQuery = new Set();
     for (const result of organic) {
       if (!result.link) continue;
       if (JUNK_TITLE_PATTERNS.test(result.title ?? '')) continue;
@@ -443,6 +493,8 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
       if (isDomainBlocked(domain)) continue;
       if (dedupSets.existingDomains.has(domain)) continue;
       if (dedupSets.customerDomains.has(domain)) continue;
+      if (seenInQuery.has(domain)) continue; // within-query dedup
+      seenInQuery.add(domain);
       newResults.push({ ...result, _domain: domain });
     }
 
@@ -452,12 +504,15 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
     const hybridList = [];
     for (const result of newResults) {
       let chData = null;
-      // Strip suffix noise like "- Home", "| Products", "– Welcome", trailing Ltd/Limited noise retained
+      // Strip suffix noise like "- Home", "| Products", "– Welcome"
       const companyName = result.title
         ?.replace(/\s*[-|–|:]\s*(home|welcome|products|services|about|contact|uk|official site|website).*$/i, '')
         ?.replace(/\s*[-|–]\s*.*$/, '')
         ?.trim();
-      if (companyName) {
+      // Only do CH lookup for homepage results with short titles (articles have long titles)
+      let isHomepage = false;
+      try { const u = new URL(result.link); isHomepage = u.pathname === '/' || u.pathname === '' || u.pathname === '/index.html'; } catch {}
+      if (companyName && companyName.length <= 50 && isHomepage) {
         try {
           const chSearch = await searchCH({ companyName, size: 3 });
           const match = (chSearch.items ?? []).find(item =>

@@ -20,13 +20,25 @@ Buying Trigger: {{itp_buying_trigger}}
 
 {{buyer_context}}
 
-For each company, generate a score between 0 and 100 based on how well it matches the ITP. Consider:
-- Does this company's industry suggest they would actually BUY from {{account_organisation_name}}? Think about the supply chain.
-- SIC code relevance (does the industry match what the ITP targets?)
-- Location match (is the company in the right geographic area?)
+For each company, generate a score between 0 and 100 based on how well it matches the ITP.
+
+SCORING GUIDANCE:
+- When an Apollo description is present, treat it as the PRIMARY signal — it tells you what the company actually does
+- When no Apollo description is present, use SIC code and company name as your best estimate and give reasonable benefit of the doubt
+- Score 70-100: Strong match — the company clearly operates in the right industry and would plausibly buy from {{account_organisation_name}}
+- Score 50-69: Possible match — the industry is broadly relevant even if not a perfect fit
+- Score below 50: Poor match — wrong industry, wrong company type, or clear disqualifier
+
+AUTOMATIC DISQUALIFIERS (score 10 or below regardless of other factors):
+- Company is based outside the UK (check Country field from Apollo — if not UK/England/Scotland/Wales/Northern Ireland, score 10 or below)
+- Company is a distributor, retailer, or reseller (not a manufacturer or end-user)
+- Company is a holding company, investment vehicle, or shell company with no operating activity
+- Company has fewer than 5 employees
+
+Also consider:
 - Company maturity (date of creation — is it established enough?)
+- Company size (employee count and revenue from Apollo if available)
 - Officers/directors (do their roles suggest the right type of business?)
-- Company type (Ltd, PLC, LLP — does it fit the ITP's target demographic?)
 
 Zero represents a total mismatch. 100 represents a perfect match. Also provide a one-sentence reason for the score.
 

@@ -8,6 +8,10 @@ import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const MAX_CONTACTS_PER_COMPANY = 10;
+// If a page has more than this many emails it's likely a branch/location listing — skip HTML emails
+const BRANCH_EMAIL_THRESHOLD = 15;
+
 const DUMMY_EMAIL_DOMAINS = new Set([
   'example.com', 'example.org', 'example.net',
   'test.com', 'test.org', 'testing.com',
@@ -134,13 +138,18 @@ export async function executeSkill({ target_id, user_details_id, silent = true }
     }
   }
 
-  // Merge emails found directly in HTML with Claude-extracted people
-  // Add any HTML emails that Claude didn't find as "unknown" contacts
+  // Merge emails found directly in HTML with Claude-extracted people.
+  // Skip HTML emails entirely if there are too many — that signals a branch/location
+  // listing (e.g. city@company.com × 100) rather than individual contacts.
   const claudeEmails = new Set(extractedPeople.map(p => p.email?.toLowerCase()).filter(Boolean));
-  for (const htmlEmail of scrapeResult.emails) {
-    if (!claudeEmails.has(htmlEmail)) {
-      extractedPeople.push({ first_name: null, last_name: null, email: htmlEmail, role: null, source: 'website_html' });
+  if (scrapeResult.emails.length <= BRANCH_EMAIL_THRESHOLD) {
+    for (const htmlEmail of scrapeResult.emails) {
+      if (!claudeEmails.has(htmlEmail)) {
+        extractedPeople.push({ first_name: null, last_name: null, email: htmlEmail, role: null, source: 'website_html' });
+      }
     }
+  } else {
+    console.log(`[enrich_target] Skipping ${scrapeResult.emails.length} HTML emails — likely branch/location listing`);
   }
 
   // ── Step 4: Apollo People Search ────────────────────────────────────
@@ -196,6 +205,10 @@ export async function executeSkill({ target_id, user_details_id, silent = true }
   const savedContacts = [];
 
   for (const person of extractedPeople) {
+    if (savedContacts.length >= MAX_CONTACTS_PER_COMPANY) {
+      console.log(`[enrich_target] Contact cap (${MAX_CONTACTS_PER_COMPANY}) reached — stopping`);
+      break;
+    }
     let email = person.email ?? null;
     let phone = person.phone ?? null;
     let linkedin = person.linkedin ?? null;
