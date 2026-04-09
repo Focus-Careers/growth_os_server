@@ -9,11 +9,11 @@ import { searchCompaniesHouseForItp } from '../target_finder_ten_leads/companies
 import { isDomainBlocked, resolveDomain } from '../target_finder_ten_leads/domain_resolver.js';
 import { buildSearchProfile } from '../target_finder_ten_leads/build_search_profile.js';
 import { shouldSkipCompany } from '../target_finder_ten_leads/company_filter.js';
-import { searchCompanies as searchCH } from '../../../../config/companies_house.js';
+import { searchCompanies as searchCH, getCompanyProfile } from '../../../../config/companies_house.js';
 import { openRun, increment, closeRun } from '../../../../lib/cost_tracker.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const HIGH_SCORE_THRESHOLD = 70;
+const HIGH_SCORE_THRESHOLD = 60;
 const TARGET_LEAD_COUNT = 100;
 const CH_BATCH_SIZE = 20;
 const MAX_SERPER_ITERATIONS = 50;
@@ -432,13 +432,17 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
     const organic = serperData.organic ?? [];
     const newResults = [];
 
+    // Skip results that are clearly not company homepages
+    const JUNK_TITLE_PATTERNS = /^\[pdf\]|^\[doc\]|catalogue|brochure|directory|magazine|journal|news|wikipedia|linkedin\.com|facebook\.com|twitter\.com|instagram\.com|youtube\.com/i;
+
     for (const result of organic) {
       if (!result.link) continue;
+      if (JUNK_TITLE_PATTERNS.test(result.title ?? '')) continue;
       let domain;
       try { domain = new URL(result.link).hostname.replace(/^www\./, ''); } catch { continue; }
-      if (dedupSets.customerDomains.has(result.link.toLowerCase())) continue;
       if (isDomainBlocked(domain)) continue;
       if (dedupSets.existingDomains.has(domain)) continue;
+      if (dedupSets.customerDomains.has(domain)) continue;
       newResults.push({ ...result, _domain: domain });
     }
 
@@ -448,7 +452,11 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
     const hybridList = [];
     for (const result of newResults) {
       let chData = null;
-      const companyName = result.title?.replace(/\s*[-|–].*$/, '').trim();
+      // Strip suffix noise like "- Home", "| Products", "– Welcome", trailing Ltd/Limited noise retained
+      const companyName = result.title
+        ?.replace(/\s*[-|–|:]\s*(home|welcome|products|services|about|contact|uk|official site|website).*$/i, '')
+        ?.replace(/\s*[-|–]\s*.*$/, '')
+        ?.trim();
       if (companyName) {
         try {
           const chSearch = await searchCH({ companyName, size: 3 });
