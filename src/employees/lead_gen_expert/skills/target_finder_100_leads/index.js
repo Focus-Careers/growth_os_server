@@ -6,10 +6,11 @@ import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { executeSkill as runEnrichTarget } from '../enrich_target/index.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 import { searchCompaniesHouseForItp } from '../target_finder_ten_leads/companies_house_search.js';
-import { isDomainBlocked } from '../target_finder_ten_leads/domain_resolver.js';
+import { isDomainBlocked, resolveDomain } from '../target_finder_ten_leads/domain_resolver.js';
 import { buildSearchProfile } from '../target_finder_ten_leads/build_search_profile.js';
 import { shouldSkipCompany } from '../target_finder_ten_leads/company_filter.js';
-import { searchCompanies as searchCH, getCompanyProfile } from '../../../../config/companies_house.js';
+import { searchCompanies as searchCH } from '../../../../config/companies_house.js';
+import { openRun, increment, closeRun } from '../../../../lib/cost_tracker.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HIGH_SCORE_THRESHOLD = 70;
@@ -186,8 +187,20 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
 async function createLeadFromCH(chCompany, score, reason, itp, accountId, user_details_id, campaign_id, dedupSets) {
   const admin = getSupabaseAdmin();
 
+  // Resolve domain post-scoring — only companies that passed the threshold reach here,
+  // so Serper credits are spent on genuinely promising candidates only.
+  const domain = await resolveDomain(chCompany.companyName, chCompany.location);
+
+  // Dedup check on resolved domain
+  if (domain) {
+    if (dedupSets.existingDomains.has(domain) || dedupSets.customerDomains.has(domain)) {
+      console.log(`[target_finder_100] Skipping ${chCompany.companyName} — domain ${domain} already seen`);
+      return;
+    }
+  }
+
   const { data: newTarget, error } = await admin.from('targets').insert({
-    domain: chCompany.domain, title: chCompany.companyName, link: chCompany.link,
+    domain, title: chCompany.companyName, link: domain ? `https://${domain}` : null,
     companies_house_number: chCompany.companyNumber,
     company_location: chCompany.location, industry: chCompany.sicDescription,
   }).select('id').single();
@@ -195,7 +208,7 @@ async function createLeadFromCH(chCompany, score, reason, itp, accountId, user_d
   if (error) { console.error('[target_finder_100] Target insert error:', error); return; }
 
   const targetId = newTarget.id;
-  if (chCompany.domain) dedupSets.existingDomains.add(chCompany.domain);
+  if (domain) dedupSets.existingDomains.add(domain);
   if (chCompany.companyNumber) dedupSets.existingCHNumbers.add(chCompany.companyNumber);
 
   await admin.from('leads').insert({
@@ -211,7 +224,7 @@ async function createLeadFromCH(chCompany, score, reason, itp, accountId, user_d
     });
   }
 
-  if (chCompany.domain) {
+  if (domain) {
     try {
       const enrichResult = await runEnrichTarget({ target_id: targetId, user_details_id, silent: true });
       await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
@@ -242,6 +255,13 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
   const initialApprovedCount = await countApprovedLeads(itp.id);
   const targetCount = initialApprovedCount + TARGET_LEAD_COUNT;
   console.log(`[target_finder_100] Starting with ${initialApprovedCount} approved leads, aiming for ${targetCount}`);
+
+  const runId = await openRun({
+    account_id: userDetails.account_id,
+    itp_id: itp.id,
+    campaign_id: campaign_id ?? null,
+    user_details_id,
+  });
 
   const { data: account } = await admin
     .from('account')
@@ -306,6 +326,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
 
       const filtered = chResults.filter(c => !shouldSkipCompany(c, searchProfile));
       console.log(`[target_finder_100] Step 1: ${chResults.length} found, ${filtered.length} after pre-filter`);
+      await increment(runId, { ch_companies_found: chResults.length, ch_companies_after_filter: filtered.length });
 
       if (filtered.length > 0) {
         const allScored = [];
@@ -313,6 +334,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
           const batch = filtered.slice(i, i + CH_BATCH_SIZE);
           console.log(`[target_finder_100] Step 1 scoring batch ${Math.floor(i / CH_BATCH_SIZE) + 1}`);
           const scores = await scoreStructuredBatch(batch, fillTemplate, structuredScoreTemplate, buyerContext);
+          await increment(runId, { haiku_calls_used: 1 });
           for (const item of scores) {
             if (batch[item.index]) allScored.push({ company: batch[item.index], score: item.score, reason: item.reason });
           }
@@ -325,7 +347,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
 
         const count = await countApprovedLeads(itp.id);
         console.log(`[target_finder_100] After Step 1: ${count}/${targetCount}`);
-        if (count >= targetCount) return finalize(itp, user_details_id, targetCount);
+        if (count >= targetCount) return finalize(itp, user_details_id, targetCount, runId);
       }
     } catch (err) {
       console.error('[target_finder_100] Step 1 error:', err.message);
@@ -351,12 +373,14 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
       return !reason;
     });
     console.log(`[target_finder_100] Step 2: ${chResults.length} found, ${filtered.length} after pre-filter`);
+    await increment(runId, { ch_companies_found: chResults.length, ch_companies_after_filter: filtered.length });
 
     if (filtered.length > 0) {
       for (let i = 0; i < filtered.length; i += CH_BATCH_SIZE) {
         const batch = filtered.slice(i, i + CH_BATCH_SIZE);
         console.log(`[target_finder_100] Step 2 scoring batch ${Math.floor(i / CH_BATCH_SIZE) + 1}`);
         const scores = await scoreStructuredBatch(batch, fillTemplate, structuredScoreTemplate, buyerContext);
+        await increment(runId, { haiku_calls_used: 1 });
 
         for (const item of scores) {
           const company = batch[item.index];
@@ -375,7 +399,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
   {
     const count = await countApprovedLeads(itp.id);
     console.log(`[target_finder_100] After Step 2: ${count}/${targetCount}`);
-    if (count >= targetCount) return finalize(itp, user_details_id, targetCount);
+    if (count >= targetCount) return finalize(itp, user_details_id, targetCount, runId);
   }
 
   // ================================================================
@@ -396,6 +420,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
 
     console.log(`[target_finder_100] Google query (${serperIterations}): ${query}`);
 
+    await increment(runId, { serper_calls_used: 1 });
     const serperRes = await fetch('https://google.serper.dev/search', {
       method: 'POST',
       headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' },
@@ -455,6 +480,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
     }).join('\n\n');
 
     const scorePrompt = scorePromptBase.replace('{{hybrid_companies}}', targetsList);
+    await increment(runId, { haiku_calls_used: 1 });
     const scoreRes = await callClaude({ model: 'claude-haiku-4-5-20251001', max_tokens: 1024, messages: [{ role: 'user', content: scorePrompt }] });
 
     let scores = [];
@@ -525,6 +551,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
       '{{previous_queries}}': previousQueriesText,
     });
 
+    await increment(runId, { haiku_calls_used: 1 });
     const searchResponse = await callClaude({
       model: 'claude-haiku-4-5-20251001', max_tokens: 256,
       messages: [{ role: 'user', content: searchPrompt }],
@@ -540,7 +567,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
   {
     const count = await countApprovedLeads(itp.id);
     console.log(`[target_finder_100] After Step 3: ${count}/${targetCount}`);
-    if (count >= targetCount) return finalize(itp, user_details_id, targetCount);
+    if (count >= targetCount) return finalize(itp, user_details_id, targetCount, runId);
   }
 
   // ================================================================
@@ -597,10 +624,10 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
     }
   }
 
-  return finalize(itp, user_details_id, targetCount);
+  return finalize(itp, user_details_id, targetCount, runId);
 }
 
-async function finalize(itp, user_details_id, targetCount) {
+async function finalize(itp, user_details_id, targetCount, runId = null) {
   const { data: finalLeads } = await getSupabaseAdmin()
     .from('leads')
     .select('id, score, approved, target_id, targets(id, title, link)')
@@ -608,6 +635,9 @@ async function finalize(itp, user_details_id, targetCount) {
 
   const finalApprovedCount = (finalLeads ?? []).filter(l => l.approved).length;
   console.log(`[target_finder_100] Final: ${finalApprovedCount} approved leads`);
+
+  await increment(runId, { ch_companies_after_scoring: finalApprovedCount });
+  await closeRun(runId, 'completed');
 
   await processSkillOutput({
     employee: 'lead_gen_expert',
