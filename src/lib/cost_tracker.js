@@ -56,7 +56,7 @@ export async function increment(runId, increments) {
   }
 
   const updates = {};
-  for (const field of fields) {
+  for (const field of Object.keys(increments)) {
     updates[field] = (current[field] ?? 0) + (increments[field] ?? 0);
   }
 
