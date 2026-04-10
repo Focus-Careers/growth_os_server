@@ -33,10 +33,24 @@ const DUMMY_FULL_NAMES = new Set([
   'your name', 'contact name', 'person name', 'first name last name',
 ]);
 
+// Basic email format: local@domain.tld — TLD must be 2-6 alpha chars, no junk after
+const VALID_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[a-z]{2,6}$/i;
+// Repeated-char placeholder detector: xxx@xxx.xxx, aaa@bbb.ccc etc.
+const REPEATED_CHAR_RE = /^(.)\1+$/;
+
 function isDummyContact(email, firstName, lastName) {
   if (!email) return false;
+
+  // Basic format check — catches malformed scrapes like "sales@electroparts.ltd.ukor"
+  if (!VALID_EMAIL_RE.test(email)) return true;
+
   const [local, domain] = email.toLowerCase().split('@');
-  if (!domain) return false;
+  if (!domain) return true;
+
+  // Placeholder pattern: local or domain segments are all the same character (xxx, aaa, 111)
+  const domainParts = domain.split('.');
+  if (REPEATED_CHAR_RE.test(local) || domainParts.every(p => REPEATED_CHAR_RE.test(p))) return true;
+
   if (DUMMY_EMAIL_DOMAINS.has(domain)) return true;
   if (DUMMY_EMAIL_LOCALS.has(local)) return true;
   const fullName = `${(firstName ?? '').trim()} ${(lastName ?? '').trim()}`.toLowerCase().trim();

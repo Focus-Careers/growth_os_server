@@ -30,12 +30,23 @@ const BLOCKED_DOMAINS = new Set([
   'companypulse.co.uk', 'vat-lookup.co.uk', 'ukphonebook.com', 'creditsafe.com',
   'wastebook.co.uk', 'search.infobelpro.com', 'stratfordiq.com', 'datalog.co.uk',
   'scoriff.co.uk', 'secret-bases.co.uk', 'amazonaws.com', 'streetguide.co.uk',
+  // Round 4 blocklist additions (caught in prod logs 2026-04-10)
+  'bloomberg.com', 'rocketreach.co', 'rocketreach.com',
+  'company-information.service.gov.uk', 'ico.org.uk',
+  'directory.mirror.co.uk', 'verif.com', 'verif.co.uk',
+  'trademarkia.com', 'mapquest.com', 'mapolist.com',
+  'archive.org', 'futureoflife.org',
+  'companydatashop.com', 'checkcompany.co.uk', 'bizstats.co.uk',
+  'f6s.com', 'b2bhint.com', 'uktradeinfo.com', 'adsgroup.org.uk',
+  'crunchbase.com', 'legalentityidentifier.co.uk',
 ]);
 
 // Suffix matches — blocks any subdomain (e.g. open.endole.co.uk, gb.kompass.com)
+// 'gov.uk' catches company-information.service.gov.uk and all other gov subdomains
 const BLOCKED_SUFFIXES = [
   'endole.co.uk', 'kompass.com', 'linkedin.com', 'companieshouse.gov.uk',
   'lursoft.lv', 'facebook.com', 'youcontrol.com.ua',
+  'gov.uk', 'gov.com',
 ];
 
 export function isDomainBlocked(domain) {

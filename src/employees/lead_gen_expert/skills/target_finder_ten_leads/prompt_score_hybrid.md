@@ -20,11 +20,25 @@ Buying Trigger: {{itp_buying_trigger}}
 
 {{buyer_context}}
 
-For each company, generate a score between 0 and 100 based on how well it matches the ITP. Consider:
-- Does this company's business suggest they would actually BUY from {{account_organisation_name}}? Think about the supply chain.
+For each company, generate a score between 0 and 100 based on how well it matches the ITP.
+
+SCORING GUIDANCE:
+- Score 70-100: Strong match — clearly in the right industry, would plausibly buy from {{account_organisation_name}}
+- Score 50-69: Possible match — broadly relevant industry even if not a perfect fit
+- Score below 50: Poor match — wrong industry, wrong company type, or a clear disqualifier
+
+AUTOMATIC DISQUALIFIERS (score 10 or below regardless of other factors):
+- Company is based outside the UK — trade journals, US companies, European companies all score 10 or below
+- Company is a trade publication, news site, journal, or media outlet
+- Company is a distributor, retailer, or reseller (not a manufacturer or end-user)
+- Company is a rapid prototyping or on-demand manufacturing service (e.g. Protolabs, 3D printing bureaus)
+- Company is a directory, aggregator, or data service
+- Company has fewer than 5 employees
+
+Also consider:
 - Website description relevance (does what they do match who the ITP targets?)
 - If Companies House data is available: SIC codes, location, company maturity
-- If no CH data: score based on website snippet alone (with lower confidence)
+- If no CH data: score based on website snippet alone
 
 Zero represents a total mismatch. 100 represents a perfect match. Also provide a one-sentence reason for the score.
 
