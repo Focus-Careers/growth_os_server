@@ -19,16 +19,20 @@ router.post('/login', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'email required' });
 
     const supabase = getSupabaseAdmin();
-    // Check if user exists via user_details (avoids listUsers pagination issues)
-    const { data: existingUser } = await supabase.from('user_details').select('id').eq('email', email.toLowerCase().trim()).maybeSingle();
-    if (!existingUser) return res.status(404).json({ error: 'No account found with this email.' });
 
+    // Generate the magic link first — if the user doesn't exist in auth this will create one,
+    // but we gate on user_details below so orphaned auth users never get a link returned.
     const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
       type: 'magiclink',
       email: email.toLowerCase().trim(),
       options: { redirectTo: APP_URL },
     });
     if (linkError) return res.status(500).json({ error: linkError.message });
+
+    // Confirm the user has completed signup (user_details record exists for their auth id)
+    const { data: rows } = await supabase
+      .from('user_details').select('id').eq('auth_id', linkData.user.id).limit(1);
+    if (!rows || rows.length === 0) return res.status(404).json({ error: 'No account found with this email.' });
 
     res.json({ login_url: linkData.properties.action_link });
   } catch (err) {
