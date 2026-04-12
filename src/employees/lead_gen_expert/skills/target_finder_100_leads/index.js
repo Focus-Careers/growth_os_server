@@ -24,12 +24,15 @@ async function callClaude({ model, max_completion_tokens, system, messages, ...r
   const openaiMessages = system
     ? [{ role: 'system', content: system }, ...messages]
     : messages;
-  const params = { model, max_completion_tokens: max_completion_tokens, messages: openaiMessages, ...rest };
+  // GPT-5 family are reasoning models — cap reasoning to "low" for simple scoring/extraction tasks
+  // and use a higher token budget so reasoning doesn't consume everything before output starts
+  const params = { model, max_completion_tokens: Math.max(max_completion_tokens * 4, 8192), reasoning_effort: 'low', messages: openaiMessages, ...rest };
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const res = await getOpenAI().chat.completions.create(params);
+      const choice = res.choices[0];
       // Wrap response to match Anthropic shape used throughout this file
-      return { content: [{ text: res.choices[0].message.content }] };
+      return { content: [{ text: choice.message.content ?? '' }] };
     } catch (err) {
       if (err?.status === 429 && attempt < retries - 1) {
         const wait = 60000;
