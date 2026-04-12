@@ -1,4 +1,4 @@
-import { getAnthropic } from '../../config/anthropic.js';
+import { getOpenAI } from '../../config/openai.js';
 
 const SYSTEM_PROMPT = `You are classifying email replies to cold outreach campaigns.
 
@@ -17,13 +17,15 @@ Respond with ONLY the classification word. No explanation.`;
  */
 export async function classifyReply(replyBody) {
   try {
-    const response = await getAnthropic().messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 16,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: replyBody }],
+    const response = await getOpenAI().chat.completions.create({
+      model: 'gpt-5-mini',
+      max_completion_tokens: 16,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: replyBody },
+      ],
     });
-    const raw = response.content[0].text.trim().toLowerCase();
+    const raw = response.choices[0].message.content.trim().toLowerCase();
     const valid = ['positive', 'negative', 'neutral', 'out_of_office'];
     return valid.includes(raw) ? raw : 'neutral';
   } catch (err) {

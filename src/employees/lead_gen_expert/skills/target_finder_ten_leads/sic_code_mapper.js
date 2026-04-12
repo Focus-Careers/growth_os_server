@@ -1,7 +1,7 @@
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { getAnthropic } from '../../../../config/anthropic.js';
+import { getOpenAI } from '../../../../config/openai.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -18,14 +18,16 @@ async function callClaudeForSicCodes(itp) {
     `Location: ${itp.location ?? 'UK'}`,
   ].join('\n');
 
-  const response = await getAnthropic().messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 1024,
-    system: prompt,
-    messages: [{ role: 'user', content: context }],
+  const response = await getOpenAI().chat.completions.create({
+    model: 'gpt-5-mini',
+    max_completion_tokens: 1024,
+    messages: [
+      { role: 'system', content: prompt },
+      { role: 'user', content: context },
+    ],
   });
 
-  const text = response.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  const text = response.choices[0].message.content.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
   let parsed;
   try {
     parsed = JSON.parse(text);

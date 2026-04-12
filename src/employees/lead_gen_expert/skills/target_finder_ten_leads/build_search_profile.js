@@ -1,7 +1,7 @@
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { getAnthropic } from '../../../../config/anthropic.js';
+import { getOpenAI } from '../../../../config/openai.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -54,14 +54,16 @@ export async function buildSearchProfile(itp, account, customerAnalysis = null) 
     }
   }
 
-  const response = await getAnthropic().messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 2048,
-    system: prompt,
-    messages: [{ role: 'user', content: context.join('\n') }],
+  const response = await getOpenAI().chat.completions.create({
+    model: 'gpt-5',
+    max_completion_tokens: 2048,
+    messages: [
+      { role: 'system', content: prompt },
+      { role: 'user', content: context.join('\n') },
+    ],
   });
 
-  const text = response.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  const text = response.choices[0].message.content.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
   let profile;
   try {
     profile = JSON.parse(text);

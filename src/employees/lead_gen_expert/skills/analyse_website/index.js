@@ -2,7 +2,7 @@ import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import * as cheerio from 'cheerio';
-import { getAnthropic } from '../../../../config/anthropic.js';
+import { getOpenAI } from '../../../../config/openai.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 import { fetchWithPuppeteer } from '../../../../config/puppeteer_fallback.js';
@@ -144,9 +144,9 @@ export async function executeSkill({ website, user_details_id }) {
     }
   }
 
-  const message = await getAnthropic().messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 1024,
+  const message = await getOpenAI().chat.completions.create({
+    model: 'gpt-5',
+    max_completion_tokens: 1024,
     messages: [
       {
         role: 'user',
@@ -155,7 +155,7 @@ export async function executeSkill({ website, user_details_id }) {
     ],
   });
 
-  const raw = message.content[0].text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+  const raw = message.choices[0].message.content.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
   let analysis;
   try {
     analysis = JSON.parse(raw);

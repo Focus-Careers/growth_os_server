@@ -1,7 +1,7 @@
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { getAnthropic } from '../../config/anthropic.js';
+import { getOpenAI } from '../../config/openai.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -57,12 +57,14 @@ export async function generateDraperSummary(account_id, firstname) {
     ).join('\n');
   }
 
-  const response = await getAnthropic().messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 256,
-    system: prompt,
-    messages: [{ role: 'user', content: `User's first name: ${firstname ?? 'there'}\n\n${context}` }],
+  const response = await getOpenAI().chat.completions.create({
+    model: 'gpt-5-nano',
+    max_completion_tokens: 256,
+    messages: [
+      { role: 'system', content: prompt },
+      { role: 'user', content: `User's first name: ${firstname ?? 'there'}\n\n${context}` },
+    ],
   });
 
-  return response.content[0].text.trim();
+  return response.choices[0].message.content.trim();
 }

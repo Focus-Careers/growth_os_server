@@ -1,19 +1,19 @@
-import { getAnthropic } from '../../../../config/anthropic.js';
+import { getOpenAI } from '../../../../config/openai.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 
 const APOLLO_BASE_URL = 'https://api.apollo.io/v1';
 
 async function getDecisionMakerTitles(itpDemographic) {
-  const response = await getAnthropic().messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 256,
+  const response = await getOpenAI().chat.completions.create({
+    model: 'gpt-5-nano',
+    max_completion_tokens: 256,
     messages: [{
       role: 'user',
       content: `Extract 5-8 specific job titles of decision makers who would be involved in purchasing decisions from this description. Return ONLY a valid JSON array of title strings, nothing else.\n\nDescription: ${itpDemographic}`,
     }],
   });
-  const raw = response.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  const raw = response.choices[0].message.content.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
   try {
     return JSON.parse(raw);
   } catch (parseError) {

@@ -1,7 +1,7 @@
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { getAnthropic } from '../../../../config/anthropic.js';
+import { getOpenAI } from '../../../../config/openai.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { executeSkill as runEnrichTarget } from '../enrich_target/index.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
@@ -20,10 +20,16 @@ const CH_BATCH_SIZE = 20;
 const MAX_SERPER_ITERATIONS = 50;
 const APOLLO_COMPANY_SEARCH_ENABLED = process.env.APOLLO_COMPANY_SEARCH_ENABLED === 'true';
 
-async function callClaude(params, retries = 3) {
+async function callClaude({ model, max_tokens, system, messages, ...rest }, retries = 3) {
+  const openaiMessages = system
+    ? [{ role: 'system', content: system }, ...messages]
+    : messages;
+  const params = { model, max_completion_tokens: max_tokens, messages: openaiMessages, ...rest };
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      return await getAnthropic().messages.create(params);
+      const res = await getOpenAI().chat.completions.create(params);
+      // Wrap response to match Anthropic shape used throughout this file
+      return { content: [{ text: res.choices[0].message.content }] };
     } catch (err) {
       if (err?.status === 429 && attempt < retries - 1) {
         const wait = 60000;
@@ -142,7 +148,7 @@ async function scoreStructuredBatch(companies, fillTemplate, structuredScoreTemp
   });
 
   const scoreResponse = await callClaude({
-    model: 'claude-haiku-4-5-20251001', max_tokens: 2048,
+    model: 'gpt-5-mini', max_tokens: 2048,
     messages: [{ role: 'user', content: scorePrompt }],
   });
 
@@ -544,7 +550,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
 
     const scorePrompt = scorePromptBase.replace('{{hybrid_companies}}', targetsList);
     await increment(runId, { haiku_calls_used: 1 });
-    const scoreRes = await callClaude({ model: 'claude-haiku-4-5-20251001', max_tokens: 1024, messages: [{ role: 'user', content: scorePrompt }] });
+    const scoreRes = await callClaude({ model: 'gpt-5-mini', max_tokens: 1024, messages: [{ role: 'user', content: scorePrompt }] });
 
     let scores = [];
     try {
@@ -616,7 +622,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
 
     await increment(runId, { haiku_calls_used: 1 });
     const searchResponse = await callClaude({
-      model: 'claude-haiku-4-5-20251001', max_tokens: 256,
+      model: 'gpt-5-mini', max_tokens: 256,
       messages: [{ role: 'user', content: searchPrompt }],
     });
 
@@ -659,7 +665,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
 
             const targetsList = `[0] Title: ${org.name ?? 'N/A'}\nURL: https://${domain}\nSnippet: ${org.short_description ?? ''}`;
             const sp = fillTemplate(hybridScoreTemplate, { '{{buyer_context}}': buyerContext }).replace('{{hybrid_companies}}', targetsList);
-            const sr = await callClaude({ model: 'claude-haiku-4-5-20251001', max_tokens: 256, messages: [{ role: 'user', content: sp }] });
+            const sr = await callClaude({ model: 'gpt-5-mini', max_tokens: 256, messages: [{ role: 'user', content: sp }] });
 
             let score = 0, reason = '';
             try {

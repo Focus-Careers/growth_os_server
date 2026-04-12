@@ -8,16 +8,21 @@ import { readFile, readdir } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getSupabaseAdmin } from '../../config/supabase.js';
-import { getAnthropic } from '../../config/anthropic.js';
+import { getOpenAI } from '../../config/openai.js';
 import { sendDirectResponse } from '../app_message_sender/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const employeesDir = join(__dirname, '../../employees');
 
-async function callClaude(params, retries = 4) {
+async function callClaude({ model, max_tokens, system, messages, ...rest }, retries = 4) {
+  const openaiMessages = system
+    ? [{ role: 'system', content: typeof system === 'string' ? system : system.map(b => b.text ?? b).join('\n\n') }, ...messages]
+    : messages;
+  const params = { model, max_completion_tokens: max_tokens, messages: openaiMessages, ...rest };
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      return await getAnthropic().messages.create(params);
+      const res = await getOpenAI().chat.completions.create(params);
+      return { content: [{ text: res.choices[0].message.content }] };
     } catch (err) {
       const status = err?.status;
       if ((status === 429 || status === 529) && attempt < retries - 1) {
@@ -170,7 +175,7 @@ export async function processMessage(record) {
   console.log('[amp] LATEST USER MESSAGE:', userMessage);
 
   const claudeRequest = {
-    model: 'claude-haiku-4-5-20251001',
+    model: 'gpt-5-mini',
     max_tokens: 256,
     system: systemBlocks,
     messages: [{ role: 'user', content: conversationHistory }],

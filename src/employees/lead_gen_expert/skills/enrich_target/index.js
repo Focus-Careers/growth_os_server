@@ -1,4 +1,4 @@
-import { getAnthropic } from '../../../../config/anthropic.js';
+import { getOpenAI } from '../../../../config/openai.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { enrichCompany, revealPerson, searchPeopleAtCompany } from '../../../../config/apollo.js';
 import { scrapeWebsite } from '../../../../config/scraper.js';
@@ -129,16 +129,16 @@ export async function executeSkill({ target_id, user_details_id, silent = true }
   if (scrapeResult.text.length > 200) {
     try {
       const prompt = await readFile(join(__dirname, 'prompt.md'), 'utf-8');
-      const response = await getAnthropic().messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
+      const response = await getOpenAI().chat.completions.create({
+        model: 'gpt-5-mini',
+        max_completion_tokens: 1024,
         messages: [{
           role: 'user',
           content: `${prompt}\n\nDomain: ${domain}\nCompany name: ${target.title ?? 'Unknown'}\n\nWebsite content:\n${scrapeResult.text.slice(0, 8000)}`,
         }],
       });
 
-      const raw = response.content[0].text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+      const raw = response.choices[0].message.content.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
       try {
         extractedPeople = JSON.parse(raw);
         if (!Array.isArray(extractedPeople)) extractedPeople = [];

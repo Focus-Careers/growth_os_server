@@ -6,7 +6,7 @@
 // -------------------------------------------------------------------------
 
 import { getSupabaseAdmin } from '../../config/supabase.js';
-import { getAnthropic } from '../../config/anthropic.js';
+import { getOpenAI } from '../../config/openai.js';
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -14,10 +14,15 @@ import { broadcastTyping } from '../typing_broadcaster/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-async function callClaude(params, retries = 4) {
+async function callClaude({ model, max_tokens, system, messages, ...rest }, retries = 4) {
+  const openaiMessages = system
+    ? [{ role: 'system', content: system }, ...messages]
+    : messages;
+  const params = { model, max_completion_tokens: max_tokens, messages: openaiMessages, ...rest };
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      return await getAnthropic().messages.create(params);
+      const res = await getOpenAI().chat.completions.create(params);
+      return { content: [{ text: res.choices[0].message.content }] };
     } catch (err) {
       const status = err?.status;
       if ((status === 429 || status === 529) && attempt < retries - 1) {
@@ -49,7 +54,7 @@ export async function sendDirectResponse({ user_details_id, conversationHistory 
     const directResponsePrompt = await readFile(join(__dirname, 'direct_response.md'), 'utf-8');
 
     const response = await callClaude({
-      model: 'claude-sonnet-4-6',
+      model: 'gpt-5-mini',
       max_tokens: 512,
       system: directResponsePrompt,
       messages: [{ role: 'user', content: conversationHistory }],
@@ -83,7 +88,7 @@ export async function sendAppMessage({ type, employee, skill, user_details_id, s
     const userMessage = JSON.stringify({ type, employee, skill, output }, null, 2);
 
     const response = await callClaude({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'gpt-5-nano',
       max_tokens: 1024,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
