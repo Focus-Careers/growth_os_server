@@ -59,7 +59,7 @@ export async function generateDraperSummary(account_id, firstname) {
 
   const response = await getOpenAI().chat.completions.create({
     model: 'gpt-5-nano',
-    max_completion_tokens: 256,
+    max_tokens: 256,
     messages: [
       { role: 'system', content: prompt },
       { role: 'user', content: `User's first name: ${firstname ?? 'there'}\n\n${context}` },

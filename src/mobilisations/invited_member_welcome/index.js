@@ -54,7 +54,7 @@ ${contextLines}`;
 
     const response = await getOpenAI().chat.completions.create({
       model: 'gpt-5-nano',
-      max_completion_tokens: 300,
+      max_tokens: 300,
       messages: [{ role: 'user', content: prompt }],
     });
 

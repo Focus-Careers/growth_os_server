@@ -99,7 +99,7 @@ export async function analyseAndGreet(user_details_id) {
 
   const response = await getOpenAI().chat.completions.create({
     model: 'gpt-5-nano',
-    max_completion_tokens: 256,
+    max_tokens: 256,
     messages: [
       { role: 'system', content: prompt },
       {

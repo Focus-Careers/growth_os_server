@@ -18,7 +18,7 @@ async function callClaude({ model, max_tokens, system, messages, ...rest }, retr
   const openaiMessages = system
     ? [{ role: 'system', content: system }, ...messages]
     : messages;
-  const params = { model, max_completion_tokens: max_tokens, messages: openaiMessages, ...rest };
+  const params = { model, max_tokens: max_tokens, messages: openaiMessages, ...rest };
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const res = await getOpenAI().chat.completions.create(params);

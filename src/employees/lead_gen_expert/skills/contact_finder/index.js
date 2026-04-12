@@ -7,7 +7,7 @@ const APOLLO_BASE_URL = 'https://api.apollo.io/v1';
 async function getDecisionMakerTitles(itpDemographic) {
   const response = await getOpenAI().chat.completions.create({
     model: 'gpt-5-nano',
-    max_completion_tokens: 256,
+    max_tokens: 256,
     messages: [{
       role: 'user',
       content: `Extract 5-8 specific job titles of decision makers who would be involved in purchasing decisions from this description. Return ONLY a valid JSON array of title strings, nothing else.\n\nDescription: ${itpDemographic}`,
