@@ -27,7 +27,7 @@ export async function sendSignupResponse(messages) {
 
   const response = await getOpenAI().chat.completions.create({
     model: 'gpt-5',
-    max_tokens: 1024,
+    max_completion_tokens: 1024,
     messages: [{ role: 'system', content: corePrompt }, ...claudeMessages],
   });
 

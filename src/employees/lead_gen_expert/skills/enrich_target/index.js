@@ -131,7 +131,7 @@ export async function executeSkill({ target_id, user_details_id, silent = true }
       const prompt = await readFile(join(__dirname, 'prompt.md'), 'utf-8');
       const response = await getOpenAI().chat.completions.create({
         model: 'gpt-5-mini',
-        max_tokens: 1024,
+        max_completion_tokens: 1024,
         messages: [{
           role: 'user',
           content: `${prompt}\n\nDomain: ${domain}\nCompany name: ${target.title ?? 'Unknown'}\n\nWebsite content:\n${scrapeResult.text.slice(0, 8000)}`,

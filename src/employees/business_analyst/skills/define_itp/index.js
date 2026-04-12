@@ -43,7 +43,7 @@ export async function executeSkill({ organisation_name, organisation_website, de
 
   const response = await getOpenAI().chat.completions.create({
     model: 'gpt-5',
-    max_tokens: 1024,
+    max_completion_tokens: 1024,
     messages: [{ role: 'user', content: `${prompt}\n\n${userMessage}` }],
   });
 

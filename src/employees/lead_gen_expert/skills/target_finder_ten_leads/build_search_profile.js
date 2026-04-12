@@ -56,7 +56,7 @@ export async function buildSearchProfile(itp, account, customerAnalysis = null) 
 
   const response = await getOpenAI().chat.completions.create({
     model: 'gpt-5',
-    max_tokens: 2048,
+    max_completion_tokens: 2048,
     messages: [
       { role: 'system', content: prompt },
       { role: 'user', content: context.join('\n') },

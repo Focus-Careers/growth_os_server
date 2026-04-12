@@ -20,7 +20,7 @@ async function callClaudeForSicCodes(itp) {
 
   const response = await getOpenAI().chat.completions.create({
     model: 'gpt-5-mini',
-    max_tokens: 1024,
+    max_completion_tokens: 1024,
     messages: [
       { role: 'system', content: prompt },
       { role: 'user', content: context },

@@ -14,11 +14,11 @@ import { sendDirectResponse } from '../app_message_sender/index.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const employeesDir = join(__dirname, '../../employees');
 
-async function callClaude({ model, max_tokens, system, messages, ...rest }, retries = 4) {
+async function callClaude({ model, max_completion_tokens, system, messages, ...rest }, retries = 4) {
   const openaiMessages = system
     ? [{ role: 'system', content: typeof system === 'string' ? system : system.map(b => b.text ?? b).join('\n\n') }, ...messages]
     : messages;
-  const params = { model, max_tokens: max_tokens, messages: openaiMessages, ...rest };
+  const params = { model, max_completion_tokens: max_completion_tokens, messages: openaiMessages, ...rest };
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const res = await getOpenAI().chat.completions.create(params);
@@ -176,7 +176,7 @@ export async function processMessage(record) {
 
   const claudeRequest = {
     model: 'gpt-5-mini',
-    max_tokens: 256,
+    max_completion_tokens: 256,
     system: systemBlocks,
     messages: [{ role: 'user', content: conversationHistory }],
   };

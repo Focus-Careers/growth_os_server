@@ -19,11 +19,11 @@ const MAX_SERPER_ITERATIONS = 20;
 const CH_BATCH_SIZE = 40;
 const APOLLO_COMPANY_SEARCH_ENABLED = process.env.APOLLO_COMPANY_SEARCH_ENABLED === 'true';
 
-async function callClaude({ model, max_tokens, system, messages, ...rest }, retries = 3) {
+async function callClaude({ model, max_completion_tokens, system, messages, ...rest }, retries = 3) {
   const openaiMessages = system
     ? [{ role: 'system', content: system }, ...messages]
     : messages;
-  const params = { model, max_tokens: max_tokens, messages: openaiMessages, ...rest };
+  const params = { model, max_completion_tokens: max_completion_tokens, messages: openaiMessages, ...rest };
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const res = await getOpenAI().chat.completions.create(params);
@@ -118,7 +118,7 @@ async function scoreStructuredBatch(companies, fillTemplate, structuredScoreTemp
   });
 
   const scoreResponse = await callClaude({
-    model: 'gpt-5-mini', max_tokens: 1024,
+    model: 'gpt-5-mini', max_completion_tokens: 1024,
     messages: [{ role: 'user', content: scorePrompt }],
   });
 
@@ -384,7 +384,7 @@ export async function executeSkill({ user_details_id, itp_id }) {
       }).join('\n\n');
 
       const scorePrompt = scorePromptBase.replace('{{hybrid_companies}}', targetsList);
-      const scoreRes = await callClaude({ model: 'gpt-5-mini', max_tokens: 1024, messages: [{ role: 'user', content: scorePrompt }] });
+      const scoreRes = await callClaude({ model: 'gpt-5-mini', max_completion_tokens: 1024, messages: [{ role: 'user', content: scorePrompt }] });
 
       let scores = [];
       try {
@@ -506,7 +506,7 @@ export async function executeSkill({ user_details_id, itp_id }) {
             // Quick score
             const targetsList = `[0] Title: ${org.name ?? 'N/A'}\nURL: https://${domain}\nSnippet: ${org.short_description ?? ''}`;
             const sp = fillTemplate(hybridScoreTemplate, { '{{buyer_context}}': buyerContext }).replace('{{hybrid_companies}}', targetsList);
-            const sr = await callClaude({ model: 'gpt-5-mini', max_tokens: 256, messages: [{ role: 'user', content: sp }] });
+            const sr = await callClaude({ model: 'gpt-5-mini', max_completion_tokens: 256, messages: [{ role: 'user', content: sp }] });
 
             let score = 0, reason = '';
             try {

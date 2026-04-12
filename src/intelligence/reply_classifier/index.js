@@ -19,7 +19,7 @@ export async function classifyReply(replyBody) {
   try {
     const response = await getOpenAI().chat.completions.create({
       model: 'gpt-5-mini',
-      max_tokens: 16,
+      max_completion_tokens: 16,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: replyBody },

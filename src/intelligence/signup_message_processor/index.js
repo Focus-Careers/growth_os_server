@@ -39,7 +39,7 @@ export async function processSignup(req, res) {
 
     const response = await getOpenAI().chat.completions.create({
       model: 'gpt-5-mini',
-      max_tokens: 256,
+      max_completion_tokens: 256,
       messages: [{ role: 'system', content: systemPrompt }, ...claudeMessages],
     });
 

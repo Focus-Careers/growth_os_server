@@ -14,11 +14,11 @@ import { broadcastTyping } from '../typing_broadcaster/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-async function callClaude({ model, max_tokens, system, messages, ...rest }, retries = 4) {
+async function callClaude({ model, max_completion_tokens, system, messages, ...rest }, retries = 4) {
   const openaiMessages = system
     ? [{ role: 'system', content: system }, ...messages]
     : messages;
-  const params = { model, max_tokens: max_tokens, messages: openaiMessages, ...rest };
+  const params = { model, max_completion_tokens: max_completion_tokens, messages: openaiMessages, ...rest };
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const res = await getOpenAI().chat.completions.create(params);
@@ -55,7 +55,7 @@ export async function sendDirectResponse({ user_details_id, conversationHistory 
 
     const response = await callClaude({
       model: 'gpt-5-mini',
-      max_tokens: 512,
+      max_completion_tokens: 512,
       system: directResponsePrompt,
       messages: [{ role: 'user', content: conversationHistory }],
     });
@@ -89,7 +89,7 @@ export async function sendAppMessage({ type, employee, skill, user_details_id, s
 
     const response = await callClaude({
       model: 'gpt-5-nano',
-      max_tokens: 1024,
+      max_completion_tokens: 1024,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });
