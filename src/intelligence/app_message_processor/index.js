@@ -18,7 +18,7 @@ async function callClaude({ model, max_completion_tokens, system, messages, ...r
   const openaiMessages = system
     ? [{ role: 'system', content: typeof system === 'string' ? system : system.map(b => b.text ?? b).join('\n\n') }, ...messages]
     : messages;
-  const params = { model, max_completion_tokens: Math.max(max_completion_tokens * 4, 8192), reasoning_effort: 'low', messages: openaiMessages, ...rest };
+  const params = { model, max_completion_tokens: max_completion_tokens, messages: openaiMessages, ...rest };
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const res = await getOpenAI().chat.completions.create(params);
