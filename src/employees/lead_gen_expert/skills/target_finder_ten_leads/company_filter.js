@@ -9,10 +9,12 @@
 export function shouldSkipCompany(company, searchProfile) {
   const name = (company.company_name ?? company.companyName ?? '').toUpperCase();
 
-  // Skip companies with negative keywords in name
+  // Skip companies with negative keywords in name (word-boundary match to avoid false positives
+  // like "IT" matching "LIMITED", "JOINERY", "FACILITY", etc.)
   const negatives = (searchProfile.company_name_negatives ?? []).map(n => n.toUpperCase());
   for (const neg of negatives) {
-    if (name.includes(neg)) return `name contains "${neg}"`;
+    const negRegex = new RegExp(`\\b${neg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+    if (negRegex.test(name)) return `name contains "${neg}"`;
   }
 
   // Skip companies with no active officers
