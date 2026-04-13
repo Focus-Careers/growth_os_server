@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import yaml from 'js-yaml';
 import { checks } from './checks.js';
-import { getAnthropic } from '../config/anthropic.js';
+import { getOpenAI } from '../config/openai.js';
 import { getSupabaseAdmin } from '../config/supabase.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -95,12 +95,12 @@ export async function getStepFromFlow(mobilisationName, stepId, value = null, us
   if (step.type === 'ai_message' || step.type === 'ai_message_with_options') {
     const promptPath = join(__dirname, mobilisationName, step.prompt_file);
     const prompt = await readFile(promptPath, 'utf-8');
-    const response = await getAnthropic().messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 256,
+    const response = await getOpenAI().chat.completions.create({
+      model: 'gpt-5-nano',
+      max_completion_tokens: 256,
       messages: [{ role: 'user', content: prompt }],
     });
-    const generatedMessage = response.content[0].text.trim();
+    const generatedMessage = response.choices[0].message.content.trim();
     return { ...formatStep(step), messages: [generatedMessage] };
   }
 

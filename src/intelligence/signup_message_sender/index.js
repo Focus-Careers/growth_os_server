@@ -5,19 +5,13 @@
 // interaction to signup_sender_logs, and returns the reply text.
 // -------------------------------------------------------------------------
 
-import Anthropic from '@anthropic-ai/sdk';
+import { getOpenAI } from '../../config/openai.js';
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getSupabaseAdmin } from '../../config/supabase.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-let client = null;
-function getClient() {
-  if (!client) client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return client;
-}
 
 function formatMessagesForClaude(messages) {
   return messages.map(msg => ({
@@ -31,14 +25,13 @@ export async function sendSignupResponse(messages) {
 
   const claudeMessages = formatMessagesForClaude(messages);
 
-  const response = await getClient().messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 1024,
-    system: corePrompt,
-    messages: claudeMessages,
+  const response = await getOpenAI().chat.completions.create({
+    model: 'gpt-5',
+    max_completion_tokens: 1024,
+    messages: [{ role: 'system', content: corePrompt }, ...claudeMessages],
   });
 
-  const replyText = response.content[0].text.trim();
+  const replyText = response.choices[0].message.content.trim();
 
   await getSupabaseAdmin().from('signup_sender_logs').insert({
     timestamp: new Date().toISOString(),

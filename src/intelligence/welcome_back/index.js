@@ -1,7 +1,7 @@
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { getAnthropic } from '../../config/anthropic.js';
+import { getOpenAI } from '../../config/openai.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { dispatchSkill } from '../../employees/index.js';
 
@@ -97,17 +97,19 @@ export async function analyseAndGreet(user_details_id) {
   const prompt = await readFile(join(__dirname, 'prompt.md'), 'utf-8');
   const firstName = ud.firstname ?? 'there';
 
-  const response = await getAnthropic().messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 256,
-    system: prompt,
-    messages: [{
-      role: 'user',
-      content: `User's first name: ${firstName}\nState: ${state}\nContext: ${context}\nExperience: ${messages.length > 20 ? 'experienced user (many messages)' : 'newer user (still getting started)'}`,
-    }],
+  const response = await getOpenAI().chat.completions.create({
+    model: 'gpt-5-nano',
+    max_completion_tokens: 256,
+    messages: [
+      { role: 'system', content: prompt },
+      {
+        role: 'user',
+        content: `User's first name: ${firstName}\nState: ${state}\nContext: ${context}\nExperience: ${messages.length > 20 ? 'experienced user (many messages)' : 'newer user (still getting started)'}`,
+      },
+    ],
   });
 
-  const greeting = response.content[0].text.trim();
+  const greeting = response.choices[0].message.content.trim();
 
   // 6. Save session divider + greeting to messages table
   const dividerText = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });

@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { getOpenAI } from '../../config/openai.js';
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -7,12 +7,6 @@ import { triggerMobilisation } from '../../mobilisations/index.js';
 import { sendSignupResponse } from '../signup_message_sender/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-let client = null;
-function getClient() {
-  if (!client) client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return client;
-}
 
 async function loadPrompt(filename) {
   const filePath = join(__dirname, filename);
@@ -43,14 +37,13 @@ export async function processSignup(req, res) {
 
     const claudeMessages = formatMessagesForClaude(messages);
 
-    const response = await getClient().messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 256,
-      system: systemPrompt,
-      messages: claudeMessages,
+    const response = await getOpenAI().chat.completions.create({
+      model: 'gpt-5-mini',
+      max_completion_tokens: 256,
+      messages: [{ role: 'system', content: systemPrompt }, ...claudeMessages],
     });
 
-    const raw = response.content[0].text.trim();
+    const raw = response.choices[0].message.content.trim();
     const result = JSON.parse(raw);
 
     await getSupabaseAdmin().from('signup_processor_logs').insert({

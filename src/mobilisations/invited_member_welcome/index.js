@@ -1,5 +1,5 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
-import { getAnthropic } from '../../config/anthropic.js';
+import { getOpenAI } from '../../config/openai.js';
 
 async function broadcastTyping(supabase, user_details_id, typing) {
   await supabase.channel(`user:${user_details_id}`).send({
@@ -52,13 +52,13 @@ Be warm but direct. No sign-off. No bullet points. Return only the JSON array â€
 Context:
 ${contextLines}`;
 
-    const response = await getAnthropic().messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 300,
+    const response = await getOpenAI().chat.completions.create({
+      model: 'gpt-5-nano',
+      max_completion_tokens: 300,
       messages: [{ role: 'user', content: prompt }],
     });
 
-    const raw = response.content[0].text.trim();
+    const raw = response.choices[0].message.content.trim();
 
     let messages;
     try {

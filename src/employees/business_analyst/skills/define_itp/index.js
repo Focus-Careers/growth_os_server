@@ -1,7 +1,7 @@
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { getAnthropic } from '../../../../config/anthropic.js';
+import { getOpenAI } from '../../../../config/openai.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 
@@ -41,13 +41,13 @@ export async function executeSkill({ organisation_name, organisation_website, de
     console.log('[define_itp] No customer_profile available — using org details only');
   }
 
-  const response = await getAnthropic().messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 1024,
+  const response = await getOpenAI().chat.completions.create({
+    model: 'gpt-5',
+    max_completion_tokens: 1024,
     messages: [{ role: 'user', content: `${prompt}\n\n${userMessage}` }],
   });
 
-  const raw = response.content[0].text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+  const raw = response.choices[0].message.content.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
   let itp;
   try {
     itp = JSON.parse(raw);

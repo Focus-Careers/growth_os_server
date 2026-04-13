@@ -19,13 +19,38 @@ router.post('/login', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'email required' });
 
     const supabase = getSupabaseAdmin();
-    // Check if user exists via user_details (avoids listUsers pagination issues)
-    const { data: existingUser } = await supabase.from('user_details').select('id').eq('email', email.toLowerCase().trim()).maybeSingle();
-    if (!existingUser) return res.status(404).json({ error: 'No account found with this email.' });
+    const normEmail = email.toLowerCase().trim();
 
+    // Step 1: Find the auth user by email (direct query to auth.users via service role)
+    const { data: authUser } = await supabase
+      .schema('auth').from('users').select('id').eq('email', normEmail).maybeSingle();
+
+    // Step 2: If not in auth.users, paginate listUsers as fallback
+    let authUserId = authUser?.id ?? null;
+    if (!authUserId) {
+      let page = 1;
+      outer: while (true) {
+        const { data: { users } = {} } = await supabase.auth.admin.listUsers({ page, perPage: 100 });
+        if (!users?.length) break;
+        for (const u of users) {
+          if (u.email === normEmail) { authUserId = u.id; break outer; }
+        }
+        if (users.length < 100) break;
+        page++;
+      }
+    }
+
+    if (!authUserId) return res.status(404).json({ error: 'No account found with this email.' });
+
+    // Step 3: Confirm they have a user_details record (i.e. completed signup)
+    const { data: rows } = await supabase
+      .from('user_details').select('id').eq('auth_id', authUserId).limit(1);
+    if (!rows?.length) return res.status(404).json({ error: 'No account found with this email.' });
+
+    // Step 4: Generate magic link for the known-good auth user
     const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
       type: 'magiclink',
-      email: email.toLowerCase().trim(),
+      email: normEmail,
       options: { redirectTo: APP_URL },
     });
     if (linkError) return res.status(500).json({ error: linkError.message });

@@ -1,4 +1,4 @@
-import { getAnthropic } from '../../../../config/anthropic.js';
+import { getOpenAI } from '../../../../config/openai.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { enrichCompany, revealPerson, searchPeopleAtCompany } from '../../../../config/apollo.js';
 import { scrapeWebsite } from '../../../../config/scraper.js';
@@ -7,6 +7,10 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const MAX_CONTACTS_PER_COMPANY = 10;
+// If a page has more than this many emails it's likely a branch/location listing — skip HTML emails
+const BRANCH_EMAIL_THRESHOLD = 15;
 
 const DUMMY_EMAIL_DOMAINS = new Set([
   'example.com', 'example.org', 'example.net',
@@ -29,10 +33,24 @@ const DUMMY_FULL_NAMES = new Set([
   'your name', 'contact name', 'person name', 'first name last name',
 ]);
 
+// Basic email format: local@domain.tld — TLD must be 2-6 alpha chars, no junk after
+const VALID_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[a-z]{2,6}$/i;
+// Repeated-char placeholder detector: xxx@xxx.xxx, aaa@bbb.ccc etc.
+const REPEATED_CHAR_RE = /^(.)\1+$/;
+
 function isDummyContact(email, firstName, lastName) {
   if (!email) return false;
+
+  // Basic format check — catches malformed scrapes like "sales@electroparts.ltd.ukor"
+  if (!VALID_EMAIL_RE.test(email)) return true;
+
   const [local, domain] = email.toLowerCase().split('@');
-  if (!domain) return false;
+  if (!domain) return true;
+
+  // Placeholder pattern: local or domain segments are all the same character (xxx, aaa, 111)
+  const domainParts = domain.split('.');
+  if (REPEATED_CHAR_RE.test(local) || domainParts.every(p => REPEATED_CHAR_RE.test(p))) return true;
+
   if (DUMMY_EMAIL_DOMAINS.has(domain)) return true;
   if (DUMMY_EMAIL_LOCALS.has(local)) return true;
   const fullName = `${(firstName ?? '').trim()} ${(lastName ?? '').trim()}`.toLowerCase().trim();
@@ -111,16 +129,16 @@ export async function executeSkill({ target_id, user_details_id, silent = true }
   if (scrapeResult.text.length > 200) {
     try {
       const prompt = await readFile(join(__dirname, 'prompt.md'), 'utf-8');
-      const response = await getAnthropic().messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
+      const response = await getOpenAI().chat.completions.create({
+        model: 'gpt-5-mini',
+        max_completion_tokens: 1024,
         messages: [{
           role: 'user',
           content: `${prompt}\n\nDomain: ${domain}\nCompany name: ${target.title ?? 'Unknown'}\n\nWebsite content:\n${scrapeResult.text.slice(0, 8000)}`,
         }],
       });
 
-      const raw = response.content[0].text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+      const raw = response.choices[0].message.content.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
       try {
         extractedPeople = JSON.parse(raw);
         if (!Array.isArray(extractedPeople)) extractedPeople = [];
@@ -134,13 +152,18 @@ export async function executeSkill({ target_id, user_details_id, silent = true }
     }
   }
 
-  // Merge emails found directly in HTML with Claude-extracted people
-  // Add any HTML emails that Claude didn't find as "unknown" contacts
+  // Merge emails found directly in HTML with Claude-extracted people.
+  // Skip HTML emails entirely if there are too many — that signals a branch/location
+  // listing (e.g. city@company.com × 100) rather than individual contacts.
   const claudeEmails = new Set(extractedPeople.map(p => p.email?.toLowerCase()).filter(Boolean));
-  for (const htmlEmail of scrapeResult.emails) {
-    if (!claudeEmails.has(htmlEmail)) {
-      extractedPeople.push({ first_name: null, last_name: null, email: htmlEmail, role: null, source: 'website_html' });
+  if (scrapeResult.emails.length <= BRANCH_EMAIL_THRESHOLD) {
+    for (const htmlEmail of scrapeResult.emails) {
+      if (!claudeEmails.has(htmlEmail)) {
+        extractedPeople.push({ first_name: null, last_name: null, email: htmlEmail, role: null, source: 'website_html' });
+      }
     }
+  } else {
+    console.log(`[enrich_target] Skipping ${scrapeResult.emails.length} HTML emails — likely branch/location listing`);
   }
 
   // ── Step 4: Apollo People Search ────────────────────────────────────
@@ -196,6 +219,10 @@ export async function executeSkill({ target_id, user_details_id, silent = true }
   const savedContacts = [];
 
   for (const person of extractedPeople) {
+    if (savedContacts.length >= MAX_CONTACTS_PER_COMPANY) {
+      console.log(`[enrich_target] Contact cap (${MAX_CONTACTS_PER_COMPANY}) reached — stopping`);
+      break;
+    }
     let email = person.email ?? null;
     let phone = person.phone ?? null;
     let linkedin = person.linkedin ?? null;
