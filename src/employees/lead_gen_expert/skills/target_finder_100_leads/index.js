@@ -295,6 +295,8 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
   const { data: userDetails } = await admin
     .from('user_details').select('account_id').eq('id', user_details_id).single();
 
+  if (!userDetails) throw new Error(`user_details not found for id: ${user_details_id}`);
+
   let itpQuery = admin.from('itp').select('*').eq('account_id', userDetails.account_id);
   const { data: itp } = itp_id
     ? await itpQuery.eq('id', itp_id).single()

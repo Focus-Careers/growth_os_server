@@ -145,23 +145,30 @@ router.post('/update', async (req, res) => {
  * Body: { campaign_id, user_details_id }
  */
 router.post('/find-leads', async (req, res) => {
-  const { campaign_id, user_details_id } = req.body;
-  if (!campaign_id || !user_details_id) {
-    return res.status(400).json({ error: 'campaign_id and user_details_id required' });
+  const { campaign_id } = req.body;
+  if (!campaign_id) {
+    return res.status(400).json({ error: 'campaign_id required' });
   }
 
   const admin = getSupabaseAdmin();
   const { data: campaign } = await admin
-    .from('campaigns').select('itp_id').eq('id', campaign_id).single();
+    .from('campaigns').select('itp_id, account_id').eq('id', campaign_id).single();
 
   if (!campaign?.itp_id) {
     return res.status(404).json({ error: 'Campaign not found or has no ITP' });
   }
 
+  const { data: userDetails } = await admin
+    .from('user_details').select('id').eq('account_id', campaign.account_id).single();
+
+  if (!userDetails) {
+    return res.status(404).json({ error: 'No user found for this campaign' });
+  }
+
   res.json({ dispatched: true, campaign_id, itp_id: campaign.itp_id });
 
   dispatchSkill('lead_gen_expert', 'target_finder_100_leads', {
-    user_details_id,
+    user_details_id: userDetails.id,
     itp_id: campaign.itp_id,
     campaign_id,
   }).catch(err => console.error('[find-leads] dispatch error:', err));
