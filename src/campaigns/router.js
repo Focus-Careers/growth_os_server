@@ -159,7 +159,7 @@ router.post('/find-leads', async (req, res) => {
   }
 
   const { data: userDetails } = await admin
-    .from('user_details').select('id').eq('account_id', campaign.account_id).single();
+    .from('user_details').select('id').eq('account_id', campaign.account_id).limit(1).single();
 
   if (!userDetails) {
     return res.status(404).json({ error: 'No user found for this campaign' });
