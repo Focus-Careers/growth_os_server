@@ -1,5 +1,5 @@
 import * as cheerio from 'cheerio';
-import { fetchWithPuppeteer } from './puppeteer_fallback.js';
+import { scrapeWithPuppeteer } from './puppeteer_fallback.js';
 
 const COMMON_PATHS = ['/', '/about', '/about-us', '/team', '/our-team', '/contact', '/contact-us', '/people', '/staff'];
 const FETCH_TIMEOUT = 10000;
@@ -91,24 +91,15 @@ export async function scrapeWebsite(domain) {
   // Puppeteer fallback if blocked and we got nothing
   if (blocked && allText.length === 0) {
     console.log(`[scraper] Fetch blocked for ${domain}, retrying with Puppeteer`);
-    for (const path of COMMON_PATHS) {
-      try {
-        const url = `${baseUrl}${path}`;
-        const html = await fetchWithPuppeteer(url);
-        if (!html || isCloudflare(html)) continue;
-
-        const { text, emails } = processHtml(html);
-        if (text.length > 100) {
-          allText.push({ path, text: text.slice(0, 5000) });
-        }
-        emails.forEach(e => foundEmails.add(e.toLowerCase()));
-
-        console.log(`[scraper] ${url} → ${text.length} chars, ${emails.length} emails (via Puppeteer)`);
-      } catch (err) {
-        console.log(`[scraper] ${baseUrl}${path} → puppeteer error: ${err.message}`);
+    const puppeteerResults = await scrapeWithPuppeteer(baseUrl, COMMON_PATHS);
+    for (const { path, html } of puppeteerResults) {
+      if (isCloudflare(html)) continue;
+      const { text, emails } = processHtml(html);
+      if (text.length > 100) {
+        allText.push({ path, text: text.slice(0, 5000) });
       }
-
-      await new Promise(r => setTimeout(r, 500));
+      emails.forEach(e => foundEmails.add(e.toLowerCase()));
+      console.log(`[scraper] ${baseUrl}${path} → ${text.length} chars, ${emails.length} emails (via Puppeteer)`);
     }
   }
 
