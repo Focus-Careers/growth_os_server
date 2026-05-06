@@ -4,6 +4,7 @@ import { dirname, join } from 'path';
 import { getOpenAI } from '../../../../config/openai.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
+import { fixSequenceDelays } from '../../../../utils/sequence.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -75,7 +76,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_name, num
 
   // Parse num_emails from the option message (e.g. "3 email sequence" -> 3)
   const emailCount = parseInt(num_emails) || 1;
-  const sequence = generated.sequence ?? [];
+  const sequence = fixSequenceDelays(generated.sequence ?? []);
   const firstEmail = sequence[0] ?? {};
 
   console.log(`[create_campaign] Generated ${sequence.length} email sequence`);

@@ -12,7 +12,7 @@ The templates should use these placeholders (Smartlead merge tags):
 Return a JSON object with this field:
 - **sequence**: An array of email objects, one per email in the sequence. Each object has:
   - **seq_number**: 1 for the first email, 2 for the first follow-up, etc.
-  - **delay_in_days**: 0 for the first email, then 3, 5, 7 etc. for follow-ups
+  - **delay_in_days**: delays must be **strictly increasing** with no duplicates. Use this pattern: 0 (email 1), 3 (email 2), 5 (email 3), 7 (email 4), 10 (email 5). For 6+ emails continue adding 4 days each (14, 18, 22…).
   - **subject**: The email subject line (under 60 chars, compelling, not spammy). Follow-ups can use "Re: [original subject]" or a fresh subject.
   - **body**: The full email body as HTML (use <p> tags for paragraphs). Keep each email under 150 words.
 
@@ -26,11 +26,13 @@ Guidelines:
 
 Return only valid JSON. No markdown formatting or code fences.
 
-Example for a 3-email sequence:
+Example for a 5-email sequence:
 {
   "sequence": [
     { "seq_number": 1, "delay_in_days": 0, "subject": "Quick question about your hardware supply", "body": "<p>Hi {{first_name}},</p><p>I noticed {{company_name}} does...</p>" },
-    { "seq_number": 2, "delay_in_days": 3, "subject": "Re: Quick question about your hardware supply", "body": "<p>Hi {{first_name}},</p><p>Just following up...</p>" },
-    { "seq_number": 3, "delay_in_days": 5, "subject": "Last one from me", "body": "<p>Hi {{first_name}},</p><p>I'll keep this short...</p>" }
+    { "seq_number": 2, "delay_in_days": 3, "subject": "Re: Quick question about your hardware supply", "body": "<p>Hi {{first_name}},</p><p>Just following up on my last note...</p>" },
+    { "seq_number": 3, "delay_in_days": 5, "subject": "Re: Quick question about your hardware supply", "body": "<p>Hi {{first_name}},</p><p>Wanted to check if this landed...</p>" },
+    { "seq_number": 4, "delay_in_days": 7, "subject": "Re: Quick question about your hardware supply", "body": "<p>Hi {{first_name}},</p><p>Still happy to connect if the timing works...</p>" },
+    { "seq_number": 5, "delay_in_days": 10, "subject": "Last one from me", "body": "<p>Hi {{first_name}},</p><p>I'll keep this short — last email from me on this...</p>" }
   ]
 }

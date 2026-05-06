@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from '../config/supabase.js';
 import { attachEmailAccount, updateCampaignStatus, saveSequences } from '../config/smartlead.js';
 import { resolveSmartleadSender } from '../employees/email_campaign_manager/helpers/resolve_smartlead_sender.js';
 import { dispatchSkill } from '../employees/index.js';
+import { fixSequenceDelays } from '../utils/sequence.js';
 
 const router = express.Router();
 
@@ -111,9 +112,10 @@ router.post('/update', async (req, res) => {
     if (name !== undefined) updateFields.name = name;
     if (tone !== undefined) updateFields.tone = tone;
     if (email_sequence !== undefined) {
-      updateFields.email_sequence = email_sequence;
-      updateFields.subject_line = email_sequence[0]?.subject ?? null;
-      updateFields.email_template = email_sequence[0]?.body ?? null;
+      const fixedSequence = fixSequenceDelays(email_sequence);
+      updateFields.email_sequence = fixedSequence;
+      updateFields.subject_line = fixedSequence[0]?.subject ?? null;
+      updateFields.email_template = fixedSequence[0]?.body ?? null;
     }
 
     await admin.from('campaigns').update(updateFields).eq('id', campaign_id);
@@ -127,7 +129,7 @@ router.post('/update', async (req, res) => {
         .single();
 
       if (campaign?.smartlead_campaign_id && campaign.smartlead_campaign_id !== 'syncing') {
-        await saveSequences(parseInt(campaign.smartlead_campaign_id), email_sequence);
+        await saveSequences(parseInt(campaign.smartlead_campaign_id), updateFields.email_sequence);
         console.log(`[update] Re-synced sequences to Smartlead campaign ${campaign.smartlead_campaign_id}`);
       }
     }
