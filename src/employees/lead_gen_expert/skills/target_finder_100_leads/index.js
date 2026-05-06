@@ -12,6 +12,8 @@ import { shouldSkipCompany } from '../target_finder_ten_leads/company_filter.js'
 import { searchCompanies as searchCH, getCompanyProfile } from '../../../../config/companies_house.js';
 import { enrichCompany } from '../../../../config/apollo.js';
 import { openRun, increment, closeRun } from '../../../../lib/cost_tracker.js';
+import { scoreInternalTargets } from '../target_finder_ten_leads/internal_targets.js';
+import { filterContactsInActiveCampaigns } from '../../../../utils/campaign_contacts.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HIGH_SCORE_THRESHOLD = 50;
@@ -179,7 +181,23 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
 
   if (!newContacts.length) return;
 
-  for (const contact of newContacts) {
+  // Cross-campaign dedup: skip contacts already in another active campaign for this account
+  const { data: campaignRow } = await admin
+    .from('campaigns').select('smartlead_campaign_id, account_id').eq('id', campaign_id).single();
+
+  const crossFilteredIds = campaignRow?.account_id
+    ? await filterContactsInActiveCampaigns({
+        accountId: campaignRow.account_id,
+        currentCampaignId: campaign_id,
+        candidateContactIds: newContacts.map(c => c.id),
+      })
+    : newContacts.map(c => c.id);
+  const crossFilteredSet = new Set(crossFilteredIds);
+  const filteredContacts = newContacts.filter(c => crossFilteredSet.has(c.id));
+
+  if (!filteredContacts.length) return;
+
+  for (const contact of filteredContacts) {
     const { error } = await admin
       .from('campaign_contacts')
       .insert({ campaign_id, contact_id: contact.id })
@@ -188,15 +206,12 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
       console.error('[target_finder_100] campaign_contacts insert error:', error.message);
     }
   }
-  console.log(`[target_finder_100] Added ${newContacts.length} contacts to campaign ${campaign_id}`);
-
-  const { data: campaignRow } = await admin
-    .from('campaigns').select('smartlead_campaign_id').eq('id', campaign_id).single();
+  console.log(`[target_finder_100] Added ${filteredContacts.length} contacts to campaign ${campaign_id}`);
 
   if (campaignRow?.smartlead_campaign_id) {
     try {
       const { addLeads } = await import('../../../../config/smartlead.js');
-      const newContactIds = newContacts.map(c => c.id);
+      const newContactIds = filteredContacts.map(c => c.id);
       const { data: contactRows } = await admin
         .from('contacts')
         .select('id, first_name, last_name, email, role, phone, linkedin_url, target_id, targets(title, domain, company_location, industry)')
@@ -361,6 +376,24 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
   }
 
   const dedupSets = await buildDedupSets(userDetails.account_id);
+
+  // ================================================================
+  // STEP 0: Internal Database Lookup
+  // ================================================================
+  console.log('[target_finder_100] === STEP 0: Internal Lookup ===');
+  const internalLeadsCreated = await scoreInternalTargets({
+    itp, accountId: userDetails.account_id, autoApprove: true,
+    scoreThreshold: HIGH_SCORE_THRESHOLD,
+    fillTemplate, structuredScoreTemplate, buyerContext, scoreStructuredBatch,
+  });
+  if (internalLeadsCreated > 0) {
+    await increment(runId, { internal_leads_created: internalLeadsCreated });
+    const earlyCount = await countApprovedLeads(itp.id);
+    if (earlyCount >= targetCount) {
+      console.log(`[target_finder_100] STEP 0 satisfied target (${earlyCount} leads) — skipping external steps`);
+      return finalize(itp, user_details_id, targetCount, runId);
+    }
+  }
 
   // ================================================================
   // STEP 1: Customer Lookalike Search (highest quality)

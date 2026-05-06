@@ -10,6 +10,7 @@ import { isDomainBlocked } from './domain_resolver.js';
 import { broadcastSkillStatus } from '../../../../intelligence/skill_status_broadcaster/index.js';
 import { buildSearchProfile } from './build_search_profile.js';
 import { shouldSkipCompany } from './company_filter.js';
+import { scoreInternalTargets } from './internal_targets.js';
 import { searchCompanies as searchCH, getCompanyProfile } from '../../../../config/companies_house.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -242,6 +243,24 @@ export async function executeSkill({ user_details_id, itp_id }) {
   }
 
   const dedupSets = await buildDedupSets(userDetails.account_id);
+
+  // ================================================================
+  // STEP 0: Internal Database Lookup
+  // ================================================================
+  console.log('[target_finder] === STEP 0: Internal Lookup ===');
+  await sendProgress(user_details_id, 'Checking internal leads database...', 3);
+  const internalLeadsCreated = await scoreInternalTargets({
+    itp, accountId: userDetails.account_id, autoApprove: false,
+    scoreThreshold: HIGH_SCORE_THRESHOLD,
+    fillTemplate, structuredScoreTemplate, buyerContext, scoreStructuredBatch,
+  });
+  if (internalLeadsCreated > 0) {
+    const earlyCount = await countHighScoreLeads(itp.id);
+    if (earlyCount >= dynamicTarget) {
+      console.log(`[target_finder] STEP 0 satisfied target (${earlyCount} leads) — skipping external steps`);
+      return await finalize(itp, user_details_id);
+    }
+  }
 
   // ================================================================
   // STEP 1: Customer Lookalike Search (highest quality)

@@ -5,6 +5,7 @@ import { getOpenAI } from '../../../../config/openai.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 import { fixSequenceDelays } from '../../../../utils/sequence.js';
+import { filterContactsInActiveCampaigns } from '../../../../utils/campaign_contacts.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -121,13 +122,18 @@ export async function executeSkill({ user_details_id, itp_id, campaign_name, num
       .in('target_id', approvedTargetIds);
 
     if (contacts?.length) {
-      const { error: ccError } = await admin
-        .from('campaign_contacts')
-        .insert(contacts.map(c => ({
-          campaign_id: campaign.id,
-          contact_id: c.id,
-        })));
-      if (ccError) console.error('[create_campaign] campaign_contacts insert error:', ccError);
+      const allContactIds = contacts.map(c => c.id);
+      const filteredIds = await filterContactsInActiveCampaigns({
+        accountId: userDetails.account_id,
+        currentCampaignId: campaign.id,
+        candidateContactIds: allContactIds,
+      });
+      if (filteredIds.length) {
+        const { error: ccError } = await admin
+          .from('campaign_contacts')
+          .insert(filteredIds.map(id => ({ campaign_id: campaign.id, contact_id: id })));
+        if (ccError) console.error('[create_campaign] campaign_contacts insert error:', ccError);
+      }
     }
   }
 
