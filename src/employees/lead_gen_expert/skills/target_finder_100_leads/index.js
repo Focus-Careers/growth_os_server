@@ -387,7 +387,6 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
     fillTemplate, structuredScoreTemplate, buyerContext, scoreStructuredBatch,
   });
   if (internalLeadsCreated > 0) {
-    await increment(runId, { internal_leads_created: internalLeadsCreated });
     const earlyCount = await countApprovedLeads(itp.id);
     if (earlyCount >= targetCount) {
       console.log(`[target_finder_100] STEP 0 satisfied target (${earlyCount} leads) — skipping external steps`);
