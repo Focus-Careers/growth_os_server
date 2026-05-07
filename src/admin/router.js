@@ -44,6 +44,35 @@ router.get('/verify', async (req, res) => {
   res.json({ isSuperAdmin: data?.is_super_admin ?? false });
 });
 
+// GET /api/admin/health
+router.get('/health', async (req, res) => {
+  const user_details_id = req.query.user_details_id;
+  if (!user_details_id) return res.status(400).json({ error: 'user_details_id required' });
+  const supabase = getSupabaseAdmin();
+  const { data: requester } = await supabase
+    .from('user_details').select('is_super_admin').eq('id', user_details_id).single();
+  if (!requester?.is_super_admin) return res.status(403).json({ error: 'Super admin access required' });
+
+  const dayAgo     = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const twoHrsAgo  = new Date(Date.now() -  2 * 60 * 60 * 1000).toISOString();
+
+  const [
+    { count: failed_runs_24h },
+    { count: stuck_runs },
+    { count: active_crons },
+  ] = await Promise.all([
+    supabase.from('lead_generation_runs').select('*', { count: 'exact', head: true }).eq('status', 'failed').gte('created_at', dayAgo),
+    supabase.from('lead_generation_runs').select('*', { count: 'exact', head: true }).eq('status', 'running').lt('created_at', twoHrsAgo),
+    supabase.from('target_finder_crons').select('*', { count: 'exact', head: true }).eq('active', true),
+  ]);
+
+  const status = (failed_runs_24h > 0 || stuck_runs > 0) ? 'error'
+    : (active_crons === 0) ? 'warning'
+    : 'ok';
+
+  res.json({ status, failed_runs_24h: failed_runs_24h ?? 0, stuck_runs: stuck_runs ?? 0, active_crons: active_crons ?? 0 });
+});
+
 // GET /api/admin/campaigns
 router.get('/campaigns', async (req, res) => {
   const user_details_id = req.query.user_details_id;
@@ -112,7 +141,7 @@ router.get('/analytics', async (req, res) => {
     supabase.from('account').select('*', { count: 'exact', head: true }).gte('created_at', weekAgo),
     supabase.from('account').select('*', { count: 'exact', head: true }).gte('created_at', twoWeeksAgo).lt('created_at', weekAgo),
     supabase.from('lead_generation_runs')
-      .select('id, campaign_id, status, estimated_cost_pence, created_at, campaigns(name, account_id, account(organisation_name))')
+      .select('id, campaign_id, status, estimated_cost_pence, created_at, campaigns(name, account_id, itp_id, account(organisation_name))')
       .order('created_at', { ascending: false })
       .limit(20),
     supabase.from('account')
@@ -122,6 +151,20 @@ router.get('/analytics', async (req, res) => {
     supabase.from('campaigns').select('created_at').gte('created_at', twoWeeksAgo),
     supabase.from('account').select('created_at').gte('created_at', twoWeeksAgo),
   ]);
+
+  // Attach lead_count to each run using itp_id + 12-hour time window heuristic
+  const RUN_WINDOW_MS = 12 * 60 * 60 * 1000;
+  const enrichedRuns = (recentRuns || []).map(run => {
+    const itpId = run.campaigns?.itp_id;
+    if (!itpId) return { ...run, lead_count: null };
+    const runStart = new Date(run.created_at).getTime();
+    const count = (leadsRaw || []).filter(l => {
+      if (l.itp_id !== itpId) return false;
+      const t = new Date(l.created_at).getTime();
+      return t >= runStart && t < runStart + RUN_WINDOW_MS;
+    }).length;
+    return { ...run, lead_count: count };
+  });
 
   const avg = (rows) => rows?.length ? Math.round(rows.reduce((s, l) => s + (l.score || 0), 0) / rows.length) : 0;
   const avgScore         = avg(scoresThisWeek);
@@ -206,7 +249,7 @@ router.get('/analytics', async (req, res) => {
       companiesThisWeek, companiesLastWeek,
       sparks,
     },
-    recentRuns: recentRuns || [],
+    recentRuns: enrichedRuns,
     perCompany,
   });
 });
