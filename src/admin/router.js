@@ -80,6 +80,10 @@ router.get('/analytics', async (req, res) => {
     { count: companiesLastWeek },
     { data: recentRuns },
     { data: accounts },
+    { data: leadsRaw },
+    { data: contactsRaw },
+    { data: campaignsRaw },
+    { data: companiesRaw },
   ] = await Promise.all([
     supabase.from('leads').select('*', { count: 'exact', head: true }),
     supabase.from('leads').select('score').not('score', 'is', null).gte('created_at', weekAgo),
@@ -101,11 +105,34 @@ router.get('/analytics', async (req, res) => {
       .limit(20),
     supabase.from('account')
       .select('id, organisation_name, campaigns(id, name, status, itp_id)'),
+    supabase.from('leads').select('created_at, score').gte('created_at', twoWeeksAgo),
+    supabase.from('campaign_contacts').select('created_at').gte('created_at', twoWeeksAgo),
+    supabase.from('campaigns').select('created_at').gte('created_at', twoWeeksAgo),
+    supabase.from('account').select('created_at').gte('created_at', twoWeeksAgo),
   ]);
 
   const avg = (rows) => rows?.length ? Math.round(rows.reduce((s, l) => s + (l.score || 0), 0) / rows.length) : 0;
   const avgScore         = avg(scoresThisWeek);
   const avgScoreLastWeek = avg(scoresLastWeek);
+
+  // Build 14-point daily spark arrays
+  const bucket = (rows, valueFn) => Array.from({ length: 14 }, (_, i) => {
+    const d = new Date(now - (13 - i) * 24 * 60 * 60 * 1000);
+    d.setHours(0, 0, 0, 0);
+    const end = new Date(d); end.setDate(end.getDate() + 1);
+    const slice = (rows || []).filter(r => { const t = new Date(r.created_at); return t >= d && t < end; });
+    return valueFn(slice);
+  });
+  const sparks = {
+    leads:    bucket(leadsRaw, s => s.length),
+    contacts: bucket(contactsRaw, s => s.length),
+    campaigns:bucket(campaignsRaw, s => s.length),
+    companies:bucket(companiesRaw, s => s.length),
+    avgScore: bucket(leadsRaw, s => {
+      const scored = s.filter(r => r.score != null);
+      return scored.length ? Math.round(scored.reduce((a, r) => a + r.score, 0) / scored.length) : 0;
+    }),
+  };
 
   // Per-company lead + contact counts
   const accountIds = (accounts || []).map(a => a.id);
@@ -130,6 +157,7 @@ router.get('/analytics', async (req, res) => {
       avgScoreLastWeek,
       campaignsThisWeek, campaignsLastWeek,
       companiesThisWeek, companiesLastWeek,
+      sparks,
     },
     recentRuns: recentRuns || [],
     perCompany,
