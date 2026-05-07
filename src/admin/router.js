@@ -158,20 +158,39 @@ router.get('/crons', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
-  // Resolve campaign names
+  // Resolve campaign names + itp_ids in one query
   const allCampaignIds = [...new Set((crons || []).flatMap(c => c.campaign_ids))];
   let campaignNames = {};
+  let campaignItpMap = {};
   if (allCampaignIds.length > 0) {
     const { data: camps } = await supabase
       .from('campaigns')
-      .select('id, name, account:account(organisation_name)')
+      .select('id, name, itp_id, account:account(organisation_name)')
       .in('id', allCampaignIds);
-    (camps || []).forEach(c => { campaignNames[c.id] = { name: c.name, company: c.account?.organisation_name }; });
+    (camps || []).forEach(c => {
+      campaignNames[c.id] = { name: c.name, company: c.account?.organisation_name };
+      campaignItpMap[c.id] = c.itp_id;
+    });
   }
 
-  const enriched = (crons || []).map(c => ({
-    ...c,
-    campaigns: c.campaign_ids.map(id => ({ id, ...( campaignNames[id] || { name: 'Unknown', company: '' }) })),
+  // For each cron with last_run_at, count leads created since then
+  const enriched = await Promise.all((crons || []).map(async (c) => {
+    let last_run_leads = null;
+    if (c.last_run_at && c.campaign_ids?.length > 0) {
+      const itpIds = [...new Set(c.campaign_ids.map(id => campaignItpMap[id]).filter(Boolean))];
+      if (itpIds.length > 0) {
+        const { count } = await supabase
+          .from('leads').select('*', { count: 'exact', head: true })
+          .in('itp_id', itpIds)
+          .gte('created_at', c.last_run_at);
+        last_run_leads = count ?? 0;
+      }
+    }
+    return {
+      ...c,
+      campaigns: c.campaign_ids.map(id => ({ id, ...(campaignNames[id] || { name: 'Unknown', company: '' }) })),
+      last_run_leads,
+    };
   }));
 
   res.json({ crons: enriched });
