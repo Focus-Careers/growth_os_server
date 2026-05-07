@@ -34,7 +34,8 @@ function scheduleJob(cronRow) {
     console.warn(`[cronService] Invalid cron expression for job ${cronRow.id}: ${cronRow.cron_expression}`);
     return;
   }
-  const task = cron.schedule(cronRow.cron_expression, () => runCampaigns(cronRow.id, cronRow.campaign_ids));
+  const options = cronRow.timezone ? { timezone: cronRow.timezone } : {};
+  const task = cron.schedule(cronRow.cron_expression, () => runCampaigns(cronRow.id, cronRow.campaign_ids), options);
   jobs.set(cronRow.id, task);
 }
 

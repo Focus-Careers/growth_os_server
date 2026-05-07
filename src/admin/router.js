@@ -182,7 +182,7 @@ router.post('/crons', async (req, res) => {
   const supabase = await requireSuperAdmin(req, res);
   if (!supabase) return;
 
-  const { user_details_id, label, campaign_ids, cron_expression } = req.body;
+  const { user_details_id, label, campaign_ids, cron_expression, timezone } = req.body;
   if (!label || !Array.isArray(campaign_ids) || campaign_ids.length === 0 || !cron_expression) {
     return res.status(400).json({ error: 'label, campaign_ids, and cron_expression required' });
   }
@@ -192,7 +192,7 @@ router.post('/crons', async (req, res) => {
 
   const { data, error } = await supabase
     .from('target_finder_crons')
-    .insert({ label, campaign_ids, cron_expression, created_by: user_details_id, active: true })
+    .insert({ label, campaign_ids, cron_expression, timezone: timezone ?? null, created_by: user_details_id, active: true })
     .select()
     .single();
 
