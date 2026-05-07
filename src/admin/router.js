@@ -696,11 +696,17 @@ router.post('/smartlead/set-status', async (req, res) => {
   }
   const slStatus = status === 'ACTIVE' ? 'START' : 'PAUSED';
 
-  const { data: campaigns } = await supabase
+  // When pausing: pause all synced campaigns.
+  // When activating: only re-activate campaigns our DB considers active — draft campaigns stay out.
+  let query = supabase
     .from('campaigns')
     .select('id, smartlead_campaign_id')
     .not('smartlead_campaign_id', 'is', null)
     .neq('smartlead_campaign_id', 'syncing');
+
+  if (status === 'ACTIVE') query = query.eq('status', 'active');
+
+  const { data: campaigns } = await query;
 
   const results = { updated: 0, errors: [] };
   for (const c of campaigns || []) {
