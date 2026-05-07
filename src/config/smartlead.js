@@ -109,6 +109,14 @@ export async function setCampaignSettings(campaignId) {
 }
 
 /**
+ * Get all campaigns from Smartlead (up to 100).
+ */
+export async function getCampaigns() {
+  const { ok, data } = await smartleadFetch('/campaigns?offset=0&limit=100');
+  return ok ? (data ?? []) : [];
+}
+
+/**
  * Get all email accounts from Smartlead.
  */
 export async function getEmailAccounts() {

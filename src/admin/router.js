@@ -12,6 +12,7 @@ import {
   addLeads,
   registerCampaignWebhook,
   updateCampaignStatus,
+  getCampaigns as slGetCampaigns,
 } from '../config/smartlead.js';
 import { resolveSmartleadSender } from '../employees/email_campaign_manager/helpers/resolve_smartlead_sender.js';
 
@@ -360,7 +361,29 @@ router.get('/smartlead/status', async (req, res) => {
     }
   }
 
-  res.json({ sync_enabled: config?.sync_enabled ?? true, connected, connectError, updated_at: config?.updated_at });
+  // Determine current Smartlead campaign sending status
+  let campaignStatus = null; // 'ACTIVE' | 'PAUSED' | 'MIXED' | null
+  if (connected) {
+    const { data: ourCampaigns } = await supabase
+      .from('campaigns')
+      .select('smartlead_campaign_id')
+      .not('smartlead_campaign_id', 'is', null)
+      .neq('smartlead_campaign_id', 'syncing');
+
+    const ourIds = new Set((ourCampaigns || []).map(c => String(c.smartlead_campaign_id)));
+
+    if (ourIds.size > 0) {
+      const slCampaigns = await slGetCampaigns();
+      const relevant = slCampaigns.filter(c => ourIds.has(String(c.id)));
+      if (relevant.length > 0) {
+        const allActive = relevant.every(c => c.status === 'ACTIVE');
+        const allPaused = relevant.every(c => c.status !== 'ACTIVE');
+        campaignStatus = allActive ? 'ACTIVE' : allPaused ? 'PAUSED' : 'MIXED';
+      }
+    }
+  }
+
+  res.json({ sync_enabled: config?.sync_enabled ?? true, connected, connectError, campaignStatus, updated_at: config?.updated_at });
 });
 
 // POST /api/admin/smartlead/toggle
