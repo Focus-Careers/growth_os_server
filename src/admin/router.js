@@ -574,10 +574,13 @@ router.post('/smartlead/sync-all', async (req, res) => {
   const supabase = await requireSuperAdmin(req, res);
   if (!supabase) return;
 
-  // Respond immediately — sync can take 30–60s and Railway will close the connection
-  res.json({ started: true });
-
-  runSyncAll(supabase).catch(err => console.error('[admin/sync-all] fatal:', err.message));
+  try {
+    const results = await runSyncAll(supabase);
+    res.json(results);
+  } catch (err) {
+    console.error('[admin/sync-all] fatal:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/admin/smartlead/set-status
