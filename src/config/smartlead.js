@@ -5,12 +5,12 @@ function getApiKey() {
 }
 
 async function smartleadFetch(path, options = {}) {
-  const url = `${SMARTLEAD_BASE_URL}${path}`;
+  const separator = path.includes('?') ? '&' : '?';
+  const url = `${SMARTLEAD_BASE_URL}${path}${separator}api_key=${encodeURIComponent(getApiKey())}`;
   const res = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      'X-API-KEY': getApiKey(),
       ...(options.headers ?? {}),
     },
   });
