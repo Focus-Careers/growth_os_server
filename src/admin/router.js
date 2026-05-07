@@ -472,10 +472,48 @@ router.post('/smartlead/sync-all', async (req, res) => {
     .select('id, name, smartlead_campaign_id, sender_id, email_sequence, subject_line, email_template, schedule')
     .eq('status', 'active');
 
+  // Build set of valid Smartlead campaign IDs to detect stale references
+  const slCampaignList = await slGetCampaigns();
+  const validSlIds = new Set(slCampaignList.map(c => String(c.id)));
+
+  async function createInSmartlead(campaign) {
+    const slCampaign = await slCreateCampaign(campaign.name);
+    if (!slCampaign?.id) return null;
+    await supabase.from('campaigns').update({ smartlead_campaign_id: String(slCampaign.id) }).eq('id', campaign.id);
+    let sequences = campaign.email_sequence;
+    if (!sequences?.length) {
+      sequences = [{ seq_number: 1, delay_in_days: 0, subject: campaign.subject_line ?? campaign.name, body: campaign.email_template ?? '<p>Hi {{first_name}},</p>' }];
+    }
+    await saveSequences(slCampaign.id, sequences);
+    await setSchedule(slCampaign.id, campaign.schedule ?? {});
+    await setCampaignSettings(slCampaign.id);
+    if (process.env.WEBHOOK_BASE_URL) {
+      await registerCampaignWebhook(slCampaign.id, `${process.env.WEBHOOK_BASE_URL}/api/webhooks/smartlead`);
+    }
+    if (campaign.sender_id) {
+      const { slEmailAccountId } = await resolveSmartleadSender(campaign.sender_id);
+      if (slEmailAccountId) await attachEmailAccount(slCampaign.id, parseInt(slEmailAccountId));
+    }
+    return String(slCampaign.id);
+  }
+
   for (const campaign of campaigns || []) {
     try {
-      if (!campaign.smartlead_campaign_id || campaign.smartlead_campaign_id === 'syncing') {
-        // Full create + push
+      const hasStaleId = campaign.smartlead_campaign_id &&
+        campaign.smartlead_campaign_id !== 'syncing' &&
+        !validSlIds.has(String(campaign.smartlead_campaign_id));
+
+      const needsCreate = !campaign.smartlead_campaign_id ||
+        campaign.smartlead_campaign_id === 'syncing' ||
+        hasStaleId;
+
+      if (needsCreate) {
+        if (hasStaleId) {
+          await supabase.from('campaigns').update({ smartlead_campaign_id: null }).eq('id', campaign.id);
+          campaign.smartlead_campaign_id = null;
+          console.log(`[admin/sync-all] Stale Smartlead ID for campaign ${campaign.id}, recreating`);
+        }
+
         const { data: claimed } = await supabase
           .from('campaigns')
           .update({ smartlead_campaign_id: 'syncing' })
@@ -485,28 +523,10 @@ router.post('/smartlead/sync-all', async (req, res) => {
 
         if (!claimed) { results.skipped++; continue; }
 
-        const slCampaign = await slCreateCampaign(campaign.name);
-        if (!slCampaign?.id) { results.errors.push(`${campaign.id}: create failed`); continue; }
+        const newSlId = await createInSmartlead(campaign);
+        if (!newSlId) { results.errors.push(`${campaign.id}: create failed`); continue; }
 
-        await supabase.from('campaigns').update({ smartlead_campaign_id: String(slCampaign.id) }).eq('id', campaign.id);
-
-        let sequences = campaign.email_sequence;
-        if (!sequences?.length) {
-          sequences = [{ seq_number: 1, delay_in_days: 0, subject: campaign.subject_line ?? campaign.name, body: campaign.email_template ?? '<p>Hi {{first_name}},</p>' }];
-        }
-        await saveSequences(slCampaign.id, sequences);
-        await setSchedule(slCampaign.id, campaign.schedule ?? {});
-        await setCampaignSettings(slCampaign.id);
-
-        if (process.env.WEBHOOK_BASE_URL) {
-          await registerCampaignWebhook(slCampaign.id, `${process.env.WEBHOOK_BASE_URL}/api/webhooks/smartlead`);
-        }
-        if (campaign.sender_id) {
-          const { slEmailAccountId } = await resolveSmartleadSender(campaign.sender_id);
-          if (slEmailAccountId) await attachEmailAccount(slCampaign.id, parseInt(slEmailAccountId));
-        }
-
-        campaign.smartlead_campaign_id = String(slCampaign.id);
+        campaign.smartlead_campaign_id = newSlId;
         results.created++;
       }
 
@@ -531,9 +551,18 @@ router.post('/smartlead/sync-all', async (req, res) => {
           location: cc.contacts.targets?.company_location ?? '',
           custom_fields: { job_title: cc.contacts.role ?? '', industry: cc.contacts.targets?.industry ?? '' },
         }));
-        for (let i = 0; i < leads.length; i += 100) await addLeads(slId, leads.slice(i, i + 100));
-        await supabase.from('campaign_contacts').update({ smartlead_synced: true }).in('id', unsynced.map(cc => cc.id));
-        results.contacts_pushed += leads.length;
+
+        const syncedIds = [];
+        for (let i = 0; i < leads.length; i += 100) {
+          const batch = leads.slice(i, i + 100);
+          const ok = await addLeads(slId, batch);
+          if (ok) syncedIds.push(...unsynced.slice(i, i + 100).map(cc => cc.id));
+          else results.errors.push(`campaign ${campaign.id}: batch ${Math.floor(i / 100) + 1} failed`);
+        }
+        if (syncedIds.length) {
+          await supabase.from('campaign_contacts').update({ smartlead_synced: true }).in('id', syncedIds);
+          results.contacts_pushed += syncedIds.length;
+        }
       }
     } catch (err) {
       console.error(`[admin/sync-all] campaign ${campaign.id}:`, err.message);
