@@ -378,36 +378,53 @@ router.get('/users', async (req, res) => {
   const emailMap = {};
   (authUsers || []).forEach(u => { emailMap[u.id] = u.email; });
 
-  // Join auth email — user_details.auth_id links to auth.users.id
-  const { data: withAuth } = await supabase
-    .from('user_details').select('id, auth_id');
+  // Join auth_id for each user_details row
+  const { data: withAuth } = await supabase.from('user_details').select('id, auth_id');
   const authIdMap = {};
   (withAuth || []).forEach(u => { authIdMap[u.id] = u.auth_id; });
 
-  const enriched = (users || []).map(u => ({
-    ...u,
-    email: emailMap[authIdMap[u.id]] ?? null,
-  }));
+  // Group by auth_id — one entry per real user, with all companies listed
+  const grouped = {};
+  (users || []).forEach(u => {
+    const authId = authIdMap[u.id] ?? u.id;
+    if (!grouped[authId]) {
+      grouped[authId] = {
+        auth_id: authId,
+        email: emailMap[authId] ?? null,
+        firstname: u.firstname,
+        is_super_admin: u.is_super_admin,
+        companies: [],
+      };
+    }
+    grouped[authId].is_super_admin = grouped[authId].is_super_admin || u.is_super_admin;
+    grouped[authId].companies.push({
+      user_details_id: u.id,
+      account_id: u.account_id,
+      account_name: u.account?.organisation_name ?? null,
+      role: u.role,
+    });
+  });
 
-  res.json({ users: enriched });
+  res.json({ users: Object.values(grouped) });
 });
 
-// PATCH /api/admin/users/:id/super-admin
-router.patch('/users/:id/super-admin', async (req, res) => {
+// PATCH /api/admin/users/:auth_id/super-admin
+router.patch('/users/:auth_id/super-admin', async (req, res) => {
   const supabase = await requireSuperAdmin(req, res);
   if (!supabase) return;
 
-  const { id } = req.params;
+  const { auth_id } = req.params;
   const { is_super_admin } = req.body;
   if (typeof is_super_admin !== 'boolean') {
     return res.status(400).json({ error: 'is_super_admin boolean required' });
   }
 
-  const { data, error } = await supabase
-    .from('user_details').update({ is_super_admin }).eq('id', id).select().single();
+  // Update all user_details rows for this auth user
+  const { error } = await supabase
+    .from('user_details').update({ is_super_admin }).eq('auth_id', auth_id);
 
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ user: data });
+  res.json({ auth_id, is_super_admin });
 });
 
 export default router;
