@@ -325,17 +325,32 @@ router.get('/smartlead/status', async (req, res) => {
 
   const { data: config } = await supabase.from('smartlead_config').select('*').eq('id', 1).single();
 
+  const apiKey = process.env.SMARTLEAD_API_KEY;
   let connected = false;
-  try {
-    const pingRes = await fetch(`https://server.smartlead.ai/api/v1/campaigns?limit=1&offset=0`, {
-      headers: { 'X-API-KEY': process.env.SMARTLEAD_API_KEY },
-    });
-    connected = pingRes.ok;
-  } catch {
-    connected = false;
+  let connectError = null;
+
+  if (!apiKey) {
+    connectError = 'SMARTLEAD_API_KEY env var is not set';
+    console.error('[admin/smartlead]', connectError);
+  } else {
+    try {
+      const pingRes = await fetch(`https://server.smartlead.ai/api/v1/campaigns?limit=1&offset=0`, {
+        headers: { 'Content-Type': 'application/json', 'api_key': apiKey },
+        signal: AbortSignal.timeout(8000),
+      });
+      const body = await pingRes.text();
+      connected = pingRes.ok;
+      if (!pingRes.ok) {
+        connectError = `HTTP ${pingRes.status}: ${body.slice(0, 300)}`;
+        console.error('[admin/smartlead] ping failed:', connectError);
+      }
+    } catch (err) {
+      connectError = `${err.name}: ${err.message}`;
+      console.error('[admin/smartlead] ping error:', connectError);
+    }
   }
 
-  res.json({ sync_enabled: config?.sync_enabled ?? true, connected, updated_at: config?.updated_at });
+  res.json({ sync_enabled: config?.sync_enabled ?? true, connected, connectError, updated_at: config?.updated_at });
 });
 
 // POST /api/admin/smartlead/toggle
@@ -368,25 +383,28 @@ router.get('/users', async (req, res) => {
 
   const { data: users, error } = await supabase
     .from('user_details')
-    .select('id, firstname, role, is_super_admin, account_id, account:account(organisation_name)')
+    .select('id, auth_id, firstname, role, is_super_admin, account_id')
     .order('created_at', { ascending: false });
 
   if (error) return res.status(500).json({ error: error.message });
+
+  // Fetch account names separately to avoid join alias issues
+  const accountIds = [...new Set((users || []).map(u => u.account_id).filter(Boolean))];
+  const accountNameMap = {};
+  if (accountIds.length > 0) {
+    const { data: accounts } = await supabase.from('account').select('id, organisation_name').in('id', accountIds);
+    (accounts || []).forEach(a => { accountNameMap[a.id] = a.organisation_name; });
+  }
 
   // Get emails from auth.users via admin API
   const { data: { users: authUsers } } = await supabase.auth.admin.listUsers();
   const emailMap = {};
   (authUsers || []).forEach(u => { emailMap[u.id] = u.email; });
 
-  // Join auth_id for each user_details row
-  const { data: withAuth } = await supabase.from('user_details').select('id, auth_id');
-  const authIdMap = {};
-  (withAuth || []).forEach(u => { authIdMap[u.id] = u.auth_id; });
-
   // Group by auth_id — one entry per real user, with all companies listed
   const grouped = {};
   (users || []).forEach(u => {
-    const authId = authIdMap[u.id] ?? u.id;
+    const authId = u.auth_id ?? u.id;
     if (!grouped[authId]) {
       grouped[authId] = {
         auth_id: authId,
@@ -400,7 +418,7 @@ router.get('/users', async (req, res) => {
     grouped[authId].companies.push({
       user_details_id: u.id,
       account_id: u.account_id,
-      account_name: u.account?.organisation_name ?? null,
+      account_name: u.account_id ? (accountNameMap[u.account_id] ?? null) : null,
       role: u.role,
     });
   });
