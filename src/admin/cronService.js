@@ -5,6 +5,7 @@ import { dispatchSkill } from '../employees/index.js';
 const jobs = new Map(); // cronId -> node-cron task
 
 async function runCampaigns(cronId, campaignIds) {
+  console.log(`[cronService] Job fired: cron ${cronId}, campaigns: ${campaignIds.join(', ')}`);
   const supabase = getSupabaseAdmin();
   for (const campaign_id of campaignIds) {
     const { data: campaign } = await supabase
