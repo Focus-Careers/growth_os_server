@@ -59,26 +59,42 @@ router.get('/analytics', async (req, res) => {
     .from('user_details').select('is_super_admin').eq('id', user_details_id).single();
   if (!requester?.is_super_admin) return res.status(403).json({ error: 'Super admin access required' });
 
-  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const now = Date.now();
+  const weekAgo     = new Date(now - 7  * 24 * 60 * 60 * 1000).toISOString();
+  const twoWeeksAgo = new Date(now - 14 * 24 * 60 * 60 * 1000).toISOString();
 
   const [
     { count: totalLeads },
-    { data: leadScores },
+    { data: scoresThisWeek },
+    { data: scoresLastWeek },
     { count: totalCampaignContacts },
     { count: totalCampaigns },
     { count: totalCompanies },
     { count: leadsThisWeek },
+    { count: leadsLastWeek },
     { count: contactsThisWeek },
+    { count: contactsLastWeek },
+    { count: campaignsThisWeek },
+    { count: campaignsLastWeek },
+    { count: companiesThisWeek },
+    { count: companiesLastWeek },
     { data: recentRuns },
     { data: accounts },
   ] = await Promise.all([
     supabase.from('leads').select('*', { count: 'exact', head: true }),
-    supabase.from('leads').select('score').not('score', 'is', null),
+    supabase.from('leads').select('score').not('score', 'is', null).gte('created_at', weekAgo),
+    supabase.from('leads').select('score').not('score', 'is', null).gte('created_at', twoWeeksAgo).lt('created_at', weekAgo),
     supabase.from('campaign_contacts').select('*', { count: 'exact', head: true }),
     supabase.from('campaigns').select('*', { count: 'exact', head: true }),
     supabase.from('account').select('*', { count: 'exact', head: true }),
     supabase.from('leads').select('*', { count: 'exact', head: true }).gte('created_at', weekAgo),
+    supabase.from('leads').select('*', { count: 'exact', head: true }).gte('created_at', twoWeeksAgo).lt('created_at', weekAgo),
     supabase.from('campaign_contacts').select('*', { count: 'exact', head: true }).gte('created_at', weekAgo),
+    supabase.from('campaign_contacts').select('*', { count: 'exact', head: true }).gte('created_at', twoWeeksAgo).lt('created_at', weekAgo),
+    supabase.from('campaigns').select('*', { count: 'exact', head: true }).gte('created_at', weekAgo),
+    supabase.from('campaigns').select('*', { count: 'exact', head: true }).gte('created_at', twoWeeksAgo).lt('created_at', weekAgo),
+    supabase.from('account').select('*', { count: 'exact', head: true }).gte('created_at', weekAgo),
+    supabase.from('account').select('*', { count: 'exact', head: true }).gte('created_at', twoWeeksAgo).lt('created_at', weekAgo),
     supabase.from('lead_generation_runs')
       .select('id, campaign_id, status, estimated_cost_pence, created_at, campaigns(name, account_id, account(organisation_name))')
       .order('created_at', { ascending: false })
@@ -87,9 +103,9 @@ router.get('/analytics', async (req, res) => {
       .select('id, organisation_name, campaigns(id, name, status, itp_id)'),
   ]);
 
-  const avgScore = leadScores?.length
-    ? Math.round(leadScores.reduce((sum, l) => sum + (l.score || 0), 0) / leadScores.length)
-    : 0;
+  const avg = (rows) => rows?.length ? Math.round(rows.reduce((s, l) => s + (l.score || 0), 0) / rows.length) : 0;
+  const avgScore         = avg(scoresThisWeek);
+  const avgScoreLastWeek = avg(scoresLastWeek);
 
   // Per-company lead + contact counts
   const accountIds = (accounts || []).map(a => a.id);
@@ -107,7 +123,14 @@ router.get('/analytics', async (req, res) => {
   }));
 
   res.json({
-    aggregated: { totalLeads, avgScore, totalCampaignContacts, totalCampaigns, totalCompanies, leadsThisWeek, contactsThisWeek },
+    aggregated: {
+      totalLeads, avgScore, totalCampaignContacts, totalCampaigns, totalCompanies,
+      leadsThisWeek, leadsLastWeek,
+      contactsThisWeek, contactsLastWeek,
+      avgScoreLastWeek,
+      campaignsThisWeek, campaignsLastWeek,
+      companiesThisWeek, companiesLastWeek,
+    },
     recentRuns: recentRuns || [],
     perCompany,
   });
