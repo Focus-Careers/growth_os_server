@@ -9,6 +9,8 @@ import smartleadWebhookRouter from './webhooks/smartlead.js';
 import campaignsRouter from './campaigns/router.js';
 import userRouter from './user/router.js';
 import itpRouter from './itp/router.js';
+import adminRouter from './admin/router.js';
+import { init as initCronService } from './admin/cronService.js';
 
 dotenv.config();
 
@@ -17,7 +19,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -40,9 +42,11 @@ app.use('/api/skills', skillsRouter);
 app.use('/api/campaigns', campaignsRouter);
 app.use('/api/user', userRouter);
 app.use('/api/itp', itpRouter);
+app.use('/api/admin', adminRouter);
 
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
+  initCronService().catch(err => console.error('[cronService] init error:', err));
 });
 
 process.on('unhandledRejection', (reason) => {

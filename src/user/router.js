@@ -72,7 +72,7 @@ router.post('/companies', async (req, res) => {
 
     const { data: rows, error } = await getSupabaseAdmin()
       .from('user_details')
-      .select('id, firstname, signup_complete, active_mobilisation, active_step_id, account_id, role')
+      .select('id, firstname, signup_complete, active_mobilisation, active_step_id, account_id, role, is_super_admin')
       .eq('auth_id', auth_id)
       .order('created_at', { ascending: true });
 
