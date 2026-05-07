@@ -3,6 +3,17 @@ import cron from 'node-cron';
 import { getSupabaseAdmin } from '../config/supabase.js';
 import { dispatchSkill } from '../employees/index.js';
 import { addJob, removeJob, pauseJob, resumeJob } from './cronService.js';
+import {
+  createCampaign as slCreateCampaign,
+  saveSequences,
+  setSchedule,
+  setCampaignSettings,
+  attachEmailAccount,
+  addLeads,
+  registerCampaignWebhook,
+  updateCampaignStatus,
+} from '../config/smartlead.js';
+import { resolveSmartleadSender } from '../employees/email_campaign_manager/helpers/resolve_smartlead_sender.js';
 
 const router = express.Router();
 
@@ -423,6 +434,119 @@ router.get('/users', async (req, res) => {
   });
 
   res.json({ users: Object.values(grouped) });
+});
+
+// POST /api/admin/smartlead/sync-all
+router.post('/smartlead/sync-all', async (req, res) => {
+  const supabase = await requireSuperAdmin(req, res);
+  if (!supabase) return;
+
+  const { user_details_id } = req.body;
+  const results = { created: 0, contacts_pushed: 0, skipped: 0, errors: [] };
+
+  const { data: campaigns } = await supabase
+    .from('campaigns')
+    .select('id, name, smartlead_campaign_id, sender_id, email_sequence, subject_line, email_template, schedule')
+    .eq('status', 'active');
+
+  for (const campaign of campaigns || []) {
+    try {
+      if (!campaign.smartlead_campaign_id || campaign.smartlead_campaign_id === 'syncing') {
+        // Full create + push
+        const { data: claimed } = await supabase
+          .from('campaigns')
+          .update({ smartlead_campaign_id: 'syncing' })
+          .eq('id', campaign.id)
+          .is('smartlead_campaign_id', null)
+          .select('id').single();
+
+        if (!claimed) { results.skipped++; continue; }
+
+        const slCampaign = await slCreateCampaign(campaign.name);
+        if (!slCampaign?.id) { results.errors.push(`${campaign.id}: create failed`); continue; }
+
+        await supabase.from('campaigns').update({ smartlead_campaign_id: String(slCampaign.id) }).eq('id', campaign.id);
+
+        let sequences = campaign.email_sequence;
+        if (!sequences?.length) {
+          sequences = [{ seq_number: 1, delay_in_days: 0, subject: campaign.subject_line ?? campaign.name, body: campaign.email_template ?? '<p>Hi {{first_name}},</p>' }];
+        }
+        await saveSequences(slCampaign.id, sequences);
+        await setSchedule(slCampaign.id, campaign.schedule ?? {});
+        await setCampaignSettings(slCampaign.id);
+
+        if (process.env.WEBHOOK_BASE_URL) {
+          await registerCampaignWebhook(slCampaign.id, `${process.env.WEBHOOK_BASE_URL}/api/webhooks/smartlead`);
+        }
+        if (campaign.sender_id) {
+          const { slEmailAccountId } = await resolveSmartleadSender(campaign.sender_id);
+          if (slEmailAccountId) await attachEmailAccount(slCampaign.id, parseInt(slEmailAccountId));
+        }
+
+        campaign.smartlead_campaign_id = String(slCampaign.id);
+        results.created++;
+      }
+
+      // Push any unsynced contacts
+      const slId = parseInt(campaign.smartlead_campaign_id);
+      if (!slId) continue;
+
+      const { data: unsynced } = await supabase
+        .from('campaign_contacts')
+        .select('id, contacts(first_name, last_name, email, role, linkedin_url, targets(title, domain, company_location, industry))')
+        .eq('campaign_id', campaign.id)
+        .eq('smartlead_synced', false);
+
+      if (unsynced?.length) {
+        const leads = unsynced.filter(cc => cc.contacts?.email).map(cc => ({
+          email: cc.contacts.email,
+          first_name: cc.contacts.first_name ?? '',
+          last_name: cc.contacts.last_name ?? '',
+          company_name: cc.contacts.targets?.title ?? '',
+          website: cc.contacts.targets?.domain ? `https://${cc.contacts.targets.domain}` : '',
+          linkedin_profile: cc.contacts.linkedin_url ?? '',
+          location: cc.contacts.targets?.company_location ?? '',
+          custom_fields: { job_title: cc.contacts.role ?? '', industry: cc.contacts.targets?.industry ?? '' },
+        }));
+        for (let i = 0; i < leads.length; i += 100) await addLeads(slId, leads.slice(i, i + 100));
+        await supabase.from('campaign_contacts').update({ smartlead_synced: true }).in('id', unsynced.map(cc => cc.id));
+        results.contacts_pushed += leads.length;
+      }
+    } catch (err) {
+      console.error(`[admin/sync-all] campaign ${campaign.id}:`, err.message);
+      results.errors.push(`${campaign.id}: ${err.message}`);
+    }
+  }
+
+  console.log('[admin/sync-all] Done:', results);
+  res.json(results);
+});
+
+// POST /api/admin/smartlead/set-status
+router.post('/smartlead/set-status', async (req, res) => {
+  const supabase = await requireSuperAdmin(req, res);
+  if (!supabase) return;
+
+  const { status } = req.body;
+  if (status !== 'ACTIVE' && status !== 'PAUSED') {
+    return res.status(400).json({ error: 'status must be ACTIVE or PAUSED' });
+  }
+
+  const { data: campaigns } = await supabase
+    .from('campaigns')
+    .select('id, smartlead_campaign_id')
+    .not('smartlead_campaign_id', 'is', null)
+    .neq('smartlead_campaign_id', 'syncing');
+
+  const results = { updated: 0, errors: [] };
+  for (const c of campaigns || []) {
+    const ok = await updateCampaignStatus(parseInt(c.smartlead_campaign_id), status);
+    if (ok) results.updated++;
+    else results.errors.push(c.smartlead_campaign_id);
+  }
+
+  console.log(`[admin/set-status] Set ${results.updated} campaigns to ${status}`);
+  res.json(results);
 });
 
 // PATCH /api/admin/users/:auth_id/super-admin
