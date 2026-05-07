@@ -117,7 +117,7 @@ router.get('/analytics', async (req, res) => {
       .limit(20),
     supabase.from('account')
       .select('id, organisation_name, campaigns(id, name, status, itp_id)'),
-    supabase.from('leads').select('created_at, score').gte('created_at', twoWeeksAgo),
+    supabase.from('leads').select('created_at, score, itp_id').gte('created_at', twoWeeksAgo),
     supabase.from('campaign_contacts').select('created_at').gte('created_at', twoWeeksAgo),
     supabase.from('campaigns').select('created_at').gte('created_at', twoWeeksAgo),
     supabase.from('account').select('created_at').gte('created_at', twoWeeksAgo),
@@ -146,19 +146,54 @@ router.get('/analytics', async (req, res) => {
     }),
   };
 
+  // Build itp_id → account_id map for time-series bucketing
+  const itpToAccountId = {};
+  (accounts || []).forEach(a => {
+    (a.campaigns || []).forEach(c => { if (c.itp_id) itpToAccountId[c.itp_id] = a.id; });
+  });
+
+  // Group leadsRaw by account for time-series — no extra DB queries needed
+  const recentLeadsByAccount = {};
+  (leadsRaw || []).forEach(l => {
+    const aid = itpToAccountId[l.itp_id];
+    if (!aid) return;
+    if (!recentLeadsByAccount[aid]) recentLeadsByAccount[aid] = [];
+    recentLeadsByAccount[aid].push(l);
+  });
+
+  const dayBucket = (rows, nDays) => Array.from({ length: nDays }, (_, i) => {
+    const d = new Date(now - (nDays - 1 - i) * 24 * 60 * 60 * 1000);
+    d.setHours(0, 0, 0, 0);
+    const end = new Date(d); end.setDate(end.getDate() + 1);
+    return (rows || []).filter(r => { const t = new Date(r.created_at); return t >= d && t < end; }).length;
+  });
+
   // Per-company lead + contact counts
   const accountIds = (accounts || []).map(a => a.id);
   const perCompany = await Promise.all(accountIds.map(async (account_id) => {
     const account = accounts.find(a => a.id === account_id);
     const campaignIds = (account.campaigns || []).map(c => c.id);
-    if (campaignIds.length === 0) return { account_id, account_name: account.organisation_name, campaigns: account.campaigns, leadCount: 0, contactCount: 0 };
+    if (campaignIds.length === 0) return {
+      account_id, account_name: account.organisation_name, campaigns: account.campaigns,
+      leadCount: 0, contactCount: 0, leadCountThisWeek: 0, leadSeries: Array(7).fill(0),
+    };
 
     const itpIds = [...new Set((account.campaigns || []).map(c => c.itp_id).filter(Boolean))];
+    const recentLeads = recentLeadsByAccount[account_id] || [];
+    const weekAgoDate = new Date(weekAgo);
+
     const [{ count: leadCount }, { count: contactCount }] = await Promise.all([
       supabase.from('leads').select('*', { count: 'exact', head: true }).in('itp_id', itpIds),
       supabase.from('campaign_contacts').select('*', { count: 'exact', head: true }).in('campaign_id', campaignIds),
     ]);
-    return { account_id, account_name: account.organisation_name, campaigns: account.campaigns, leadCount: leadCount ?? 0, contactCount: contactCount ?? 0 };
+
+    return {
+      account_id, account_name: account.organisation_name, campaigns: account.campaigns,
+      leadCount: leadCount ?? 0,
+      contactCount: contactCount ?? 0,
+      leadCountThisWeek: recentLeads.filter(l => new Date(l.created_at) >= weekAgoDate).length,
+      leadSeries: dayBucket(recentLeads, 7),
+    };
   }));
 
   res.json({
