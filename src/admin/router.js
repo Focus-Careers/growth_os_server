@@ -334,8 +334,7 @@ router.get('/smartlead/status', async (req, res) => {
     console.error('[admin/smartlead]', connectError);
   } else {
     try {
-      const pingRes = await fetch(`https://server.smartlead.ai/api/v1/campaigns?limit=1&offset=0`, {
-        headers: { 'Content-Type': 'application/json', 'api_key': apiKey },
+      const pingRes = await fetch(`https://server.smartlead.ai/api/v1/campaigns?limit=1&offset=0&api_key=${encodeURIComponent(apiKey)}`, {
         signal: AbortSignal.timeout(8000),
       });
       const body = await pingRes.text();
