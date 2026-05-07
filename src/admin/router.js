@@ -376,8 +376,8 @@ router.get('/smartlead/status', async (req, res) => {
       const slCampaigns = await slGetCampaigns();
       const relevant = slCampaigns.filter(c => ourIds.has(String(c.id)));
       if (relevant.length > 0) {
-        const allActive = relevant.every(c => c.status === 'ACTIVE');
-        const allPaused = relevant.every(c => c.status !== 'ACTIVE');
+        const allActive = relevant.every(c => c.status === 'START');
+        const allPaused = relevant.every(c => c.status !== 'START');
         campaignStatus = allActive ? 'ACTIVE' : allPaused ? 'PAUSED' : 'MIXED';
       }
     }
@@ -592,6 +592,7 @@ router.post('/smartlead/set-status', async (req, res) => {
   if (status !== 'ACTIVE' && status !== 'PAUSED') {
     return res.status(400).json({ error: 'status must be ACTIVE or PAUSED' });
   }
+  const slStatus = status === 'ACTIVE' ? 'START' : 'PAUSED';
 
   const { data: campaigns } = await supabase
     .from('campaigns')
@@ -601,7 +602,7 @@ router.post('/smartlead/set-status', async (req, res) => {
 
   const results = { updated: 0, errors: [] };
   for (const c of campaigns || []) {
-    const ok = await updateCampaignStatus(parseInt(c.smartlead_campaign_id), status);
+    const ok = await updateCampaignStatus(parseInt(c.smartlead_campaign_id), slStatus);
     if (ok) results.updated++;
     else results.errors.push(c.smartlead_campaign_id);
   }
