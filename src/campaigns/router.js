@@ -80,11 +80,22 @@ router.post('/toggle-status', async (req, res) => {
       .update({ status, updated_at: new Date().toISOString() })
       .eq('id', campaign_id);
 
-    // Sync to Smartlead
+    // Sync to Smartlead if campaign is connected
     if (campaign?.smartlead_campaign_id && campaign.smartlead_campaign_id !== 'syncing') {
-      const slStatus = status === 'active' ? 'START' : 'PAUSED';
-      await updateCampaignStatus(parseInt(campaign.smartlead_campaign_id), slStatus);
-      console.log(`[toggle-status] Campaign ${campaign_id} → ${status} (Smartlead: ${slStatus})`);
+      if (status === 'paused') {
+        // Always honour an explicit user pause
+        await updateCampaignStatus(parseInt(campaign.smartlead_campaign_id), 'PAUSED');
+        console.log(`[toggle-status] Campaign ${campaign_id} → paused (Smartlead: PAUSED)`);
+      } else {
+        // Only start in Smartlead if admin hasn't globally paused sending
+        const { data: config } = await admin.from('smartlead_config').select('sending_paused').eq('id', 1).single();
+        if (!config?.sending_paused) {
+          await updateCampaignStatus(parseInt(campaign.smartlead_campaign_id), 'START');
+          console.log(`[toggle-status] Campaign ${campaign_id} → active (Smartlead: START)`);
+        } else {
+          console.log(`[toggle-status] Campaign ${campaign_id} → active in DB only (Smartlead globally paused)`);
+        }
+      }
     }
 
     res.json({ success: true, status });

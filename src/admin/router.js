@@ -715,6 +715,10 @@ router.post('/smartlead/set-status', async (req, res) => {
     else results.errors.push(c.smartlead_campaign_id);
   }
 
+  // Track global sending state so individual user toggles can respect it
+  await supabase.from('smartlead_config')
+    .upsert({ id: 1, sending_paused: status === 'PAUSED', updated_at: new Date().toISOString() }, { onConflict: 'id' });
+
   console.log(`[admin/set-status] Set ${results.updated} campaigns to ${status}`);
   res.json(results);
 });
