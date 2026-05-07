@@ -84,11 +84,35 @@ router.get('/campaigns', async (req, res) => {
 
   const { data: campaigns, error } = await supabase
     .from('campaigns')
-    .select('id, name, status, account_id, itp_id, smartlead_campaign_id, account:account(organisation_name), itp(name)')
+    .select('id, name, status, account_id, itp_id, smartlead_campaign_id, created_at, account:account(organisation_name), itp(name)')
     .order('created_at', { ascending: false });
 
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ campaigns });
+
+  const campaignIds = (campaigns || []).map(c => c.id);
+  const itpIds = [...new Set((campaigns || []).map(c => c.itp_id).filter(Boolean))];
+
+  const [{ data: contactRows }, { data: leadRows }] = await Promise.all([
+    campaignIds.length > 0
+      ? supabase.from('campaign_contacts').select('campaign_id').in('campaign_id', campaignIds)
+      : Promise.resolve({ data: [] }),
+    itpIds.length > 0
+      ? supabase.from('leads').select('itp_id').in('itp_id', itpIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const contactCountMap = {};
+  (contactRows || []).forEach(r => { contactCountMap[r.campaign_id] = (contactCountMap[r.campaign_id] || 0) + 1; });
+  const leadCountMap = {};
+  (leadRows || []).forEach(r => { leadCountMap[r.itp_id] = (leadCountMap[r.itp_id] || 0) + 1; });
+
+  const enriched = (campaigns || []).map(c => ({
+    ...c,
+    contact_count: contactCountMap[c.id] || 0,
+    lead_count: c.itp_id ? (leadCountMap[c.itp_id] || 0) : 0,
+  }));
+
+  res.json({ campaigns: enriched });
 });
 
 // GET /api/admin/analytics
