@@ -459,12 +459,7 @@ router.get('/users', async (req, res) => {
   res.json({ users: Object.values(grouped) });
 });
 
-// POST /api/admin/smartlead/sync-all
-router.post('/smartlead/sync-all', async (req, res) => {
-  const supabase = await requireSuperAdmin(req, res);
-  if (!supabase) return;
-
-  const { user_details_id } = req.body;
+async function runSyncAll(supabase) {
   const results = { created: 0, contacts_pushed: 0, skipped: 0, errors: [] };
 
   const { data: campaigns } = await supabase
@@ -571,7 +566,18 @@ router.post('/smartlead/sync-all', async (req, res) => {
   }
 
   console.log('[admin/sync-all] Done:', results);
-  res.json(results);
+  return results;
+}
+
+// POST /api/admin/smartlead/sync-all
+router.post('/smartlead/sync-all', async (req, res) => {
+  const supabase = await requireSuperAdmin(req, res);
+  if (!supabase) return;
+
+  // Respond immediately — sync can take 30–60s and Railway will close the connection
+  res.json({ started: true });
+
+  runSyncAll(supabase).catch(err => console.error('[admin/sync-all] fatal:', err.message));
 });
 
 // POST /api/admin/smartlead/set-status
