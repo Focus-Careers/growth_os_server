@@ -1,6 +1,7 @@
 import { getOpenAI } from '../../../../config/openai.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { enrichCompany, revealPerson, searchPeopleAtCompany } from '../../../../config/apollo.js';
+import { increment } from '../../../../lib/cost_tracker.js';
 import { scrapeWebsite } from '../../../../config/scraper.js';
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
@@ -66,7 +67,7 @@ function isDummyContact(email, firstName, lastName) {
  * @param {string} params.user_details_id - For logging
  * @param {boolean} [params.silent=false] - Skip processSkillOutput
  */
-export async function executeSkill({ target_id, user_details_id, silent = true }) {
+export async function executeSkill({ target_id, user_details_id, silent = true, runId = null }) {
   const admin = getSupabaseAdmin();
 
   // Load target
@@ -169,6 +170,8 @@ export async function executeSkill({ target_id, user_details_id, silent = true }
   // ── Step 4: Apollo People Search ────────────────────────────────────
   // Find additional contacts at this company that aren't on the website
   const apolloPeople = await searchPeopleAtCompany(domain);
+  const apolloSearchCredits = apolloPeople.filter(p => p.email).length;
+  if (apolloSearchCredits > 0) await increment(runId, { apollo_credits_used: apolloSearchCredits });
   const existingNames = new Set(
     extractedPeople
       .filter(p => p.first_name && p.last_name)
@@ -235,6 +238,7 @@ export async function executeSkill({ target_id, user_details_id, silent = true }
       if (revealed.email) {
         email = revealed.email;
         source = 'apollo_reveal';
+        await increment(runId, { apollo_credits_used: 1 });
       }
       if (revealed.phone && !phone) phone = revealed.phone;
       if (revealed.linkedin && !linkedin) linkedin = revealed.linkedin;

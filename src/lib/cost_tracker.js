@@ -5,6 +5,7 @@ import { getSupabaseAdmin } from '../config/supabase.js';
 const COST_PER_CALL_PENCE = {
   serper: 0.10,  // $60 / 50,000 credits = $0.0012/call → ~0.10p
   haiku:  0.80,  // ~$0.01 per scoring batch (rough estimate)
+  apollo: 2.00,  // $99 / 4,000 credits = $0.02475/credit → ~2.0p
 };
 
 /**
@@ -40,7 +41,7 @@ export async function increment(runId, increments) {
   // Fetch current values — always include all cost-relevant fields so
   // estimated_cost_pence is recalculated correctly regardless of which
   // counter is being incremented this call.
-  const costFields = ['serper_calls_used', 'haiku_calls_used'];
+  const costFields = ['serper_calls_used', 'haiku_calls_used', 'apollo_credits_used'];
   const allFields = [...new Set([...Object.keys(increments), ...costFields])];
   const { data: current, error: fetchError } = await getSupabaseAdmin()
     .from('lead_generation_runs')
@@ -60,11 +61,13 @@ export async function increment(runId, increments) {
 
   // Recalculate estimated cost from updated API usage
   const serper = updates.serper_calls_used ?? current.serper_calls_used ?? 0;
-  const haiku = updates.haiku_calls_used ?? current.haiku_calls_used ?? 0;
+  const haiku  = updates.haiku_calls_used  ?? current.haiku_calls_used  ?? 0;
+  const apollo = updates.apollo_credits_used ?? current.apollo_credits_used ?? 0;
 
   updates.estimated_cost_pence = Math.round(
     serper * COST_PER_CALL_PENCE.serper +
-    haiku  * COST_PER_CALL_PENCE.haiku
+    haiku  * COST_PER_CALL_PENCE.haiku  +
+    apollo * COST_PER_CALL_PENCE.apollo
   );
 
   const { error: updateError } = await getSupabaseAdmin()

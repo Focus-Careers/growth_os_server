@@ -291,7 +291,7 @@ async function createLeadFromCH(chCompany, score, reason, itp, accountId, user_d
 
   if (domain) {
     try {
-      const enrichResult = await runEnrichTarget({ target_id: targetId, user_details_id, silent: true });
+      const enrichResult = await runEnrichTarget({ target_id: targetId, user_details_id, silent: true, runId });
       await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
       await new Promise(r => setTimeout(r, 1000));
     } catch (err) {
@@ -612,7 +612,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
       });
 
       try {
-        const enrichResult = await runEnrichTarget({ target_id: newTarget.id, user_details_id, silent: true });
+        const enrichResult = await runEnrichTarget({ target_id: newTarget.id, user_details_id, silent: true, runId });
         await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
         await new Promise(r => setTimeout(r, 1000));
       } catch (err) { console.error('[target_finder_100] Google enrich error:', err.message); }
@@ -713,7 +713,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id }) {
             if (score >= HIGH_SCORE_THRESHOLD) {
               await admin.from('leads').insert({ target_id: newTarget.id, itp_id: itp.id, score, score_reason: reason, approved: true });
               try {
-                const enrichResult = await runEnrichTarget({ target_id: newTarget.id, user_details_id, silent: true });
+                const enrichResult = await runEnrichTarget({ target_id: newTarget.id, user_details_id, silent: true, runId });
                 await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
               } catch (err) {
                 console.error('[target_finder_100] Apollo enrich error:', err.message);
