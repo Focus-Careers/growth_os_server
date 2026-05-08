@@ -101,6 +101,7 @@ export async function executeSkill({ target_id, user_details_id, silent = true, 
 
   // ── Step 1: Apollo Company Enrichment ──────────────────────────────
   const apolloCompany = await enrichCompany(domain);
+  await increment(runId, { apollo_credits_used: 1 }); // /organizations/enrich costs 1 credit
 
   const enrichmentUpdate = {
     enrichment_source: 'apollo',
@@ -169,9 +170,7 @@ export async function executeSkill({ target_id, user_details_id, silent = true, 
 
   // ── Step 4: Apollo People Search ────────────────────────────────────
   // Find additional contacts at this company that aren't on the website
-  const apolloPeople = await searchPeopleAtCompany(domain);
-  const apolloSearchCredits = apolloPeople.filter(p => p.email).length;
-  if (apolloSearchCredits > 0) await increment(runId, { apollo_credits_used: apolloSearchCredits });
+  const apolloPeople = await searchPeopleAtCompany(domain); // free — no credits
   const existingNames = new Set(
     extractedPeople
       .filter(p => p.first_name && p.last_name)

@@ -115,6 +115,7 @@ async function preEnrichForScoring(companies, dedupSets) {
     if (domain) {
       try {
         apolloData = await enrichCompany(domain);
+        await increment(runId, { apollo_credits_used: 1 }); // /organizations/enrich costs 1 credit
       } catch (err) {
         console.error(`[target_finder_100] Pre-enrich Apollo error for ${company.companyName}:`, err.message);
       }
