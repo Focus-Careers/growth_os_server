@@ -3,10 +3,8 @@ import { getSupabaseAdmin } from '../config/supabase.js';
 // Approximate cost per API call, in pence (GBP)
 // Using ~$1.25 = £1 conversion
 const COST_PER_CALL_PENCE = {
-  serper: 0.32,          // $0.004 per search
-  haiku: 0.80,           // ~$0.01 per scoring batch (rough estimate)
-  email_verification: 0.30, // ~$0.0037 per MillionVerifier check
-  google_places: 1.36,   // ~$0.017 per Place Search call
+  serper: 0.10,  // $60 / 50,000 credits = $0.0012/call → ~0.10p
+  haiku:  0.80,  // ~$0.01 per scoring batch (rough estimate)
 };
 
 /**
@@ -42,7 +40,7 @@ export async function increment(runId, increments) {
   // Fetch current values — always include all cost-relevant fields so
   // estimated_cost_pence is recalculated correctly regardless of which
   // counter is being incremented this call.
-  const costFields = ['serper_calls_used', 'haiku_calls_used', 'email_verifications_used', 'google_places_calls_used'];
+  const costFields = ['serper_calls_used', 'haiku_calls_used'];
   const allFields = [...new Set([...Object.keys(increments), ...costFields])];
   const { data: current, error: fetchError } = await getSupabaseAdmin()
     .from('lead_generation_runs')
@@ -63,14 +61,10 @@ export async function increment(runId, increments) {
   // Recalculate estimated cost from updated API usage
   const serper = updates.serper_calls_used ?? current.serper_calls_used ?? 0;
   const haiku = updates.haiku_calls_used ?? current.haiku_calls_used ?? 0;
-  const verifications = updates.email_verifications_used ?? current.email_verifications_used ?? 0;
-  const places = updates.google_places_calls_used ?? current.google_places_calls_used ?? 0;
 
   updates.estimated_cost_pence = Math.round(
     serper * COST_PER_CALL_PENCE.serper +
-    haiku * COST_PER_CALL_PENCE.haiku +
-    verifications * COST_PER_CALL_PENCE.email_verification +
-    places * COST_PER_CALL_PENCE.google_places
+    haiku  * COST_PER_CALL_PENCE.haiku
   );
 
   const { error: updateError } = await getSupabaseAdmin()
