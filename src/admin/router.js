@@ -44,6 +44,75 @@ router.get('/verify', async (req, res) => {
   res.json({ isSuperAdmin: data?.is_super_admin ?? false });
 });
 
+// GET /api/admin/costs
+router.get('/costs', async (req, res) => {
+  const user_details_id = req.query.user_details_id;
+  if (!user_details_id) return res.status(400).json({ error: 'user_details_id required' });
+  const supabase = getSupabaseAdmin();
+  const { data: requester } = await supabase
+    .from('user_details').select('is_super_admin').eq('id', user_details_id).single();
+  if (!requester?.is_super_admin) return res.status(403).json({ error: 'Super admin access required' });
+
+  const [{ data: campaigns }, { data: runs }] = await Promise.all([
+    supabase.from('campaigns').select('id, account_id, itp_id, name, account:account(organisation_name)'),
+    supabase.from('lead_generation_runs').select('campaign_id, estimated_cost_pence').not('estimated_cost_pence', 'is', null),
+  ]);
+
+  const campaignIds = (campaigns || []).map(c => c.id);
+  const itpIds = [...new Set((campaigns || []).map(c => c.itp_id).filter(Boolean))];
+
+  const [leadCountResults, contactCountResults, replyCountResults] = await Promise.all([
+    Promise.all(itpIds.map(itpId =>
+      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('itp_id', itpId)
+        .then(({ count }) => ({ itpId, count: count ?? 0 }))
+    )),
+    Promise.all(campaignIds.map(id =>
+      supabase.from('campaign_contacts').select('*', { count: 'exact', head: true }).eq('campaign_id', id)
+        .then(({ count }) => ({ id, count: count ?? 0 }))
+    )),
+    Promise.all(campaignIds.map(id =>
+      supabase.from('campaign_contacts').select('*', { count: 'exact', head: true }).eq('campaign_id', id).eq('status', 'replied')
+        .then(({ count }) => ({ id, count: count ?? 0 }))
+    )),
+  ]);
+
+  const leadCountMap = Object.fromEntries(leadCountResults.map(r => [r.itpId, r.count]));
+  const contactCountMap = Object.fromEntries(contactCountResults.map(r => [r.id, r.count]));
+  const replyCountMap = Object.fromEntries(replyCountResults.map(r => [r.id, r.count]));
+
+  const spendByCampaign = {};
+  (runs || []).forEach(r => {
+    spendByCampaign[r.campaign_id] = (spendByCampaign[r.campaign_id] || 0) + (r.estimated_cost_pence || 0);
+  });
+
+  const accountMap = {};
+  (campaigns || []).forEach(c => {
+    const aid = c.account_id;
+    if (!accountMap[aid]) {
+      accountMap[aid] = { account_id: aid, account_name: c.account?.organisation_name || 'Unknown', spend_pence: 0, leads: 0, contacts: 0, replies: 0, campaigns: [] };
+    }
+    const spend = spendByCampaign[c.id] || 0;
+    const leads = c.itp_id ? (leadCountMap[c.itp_id] || 0) : 0;
+    const contacts = contactCountMap[c.id] || 0;
+    const replies = replyCountMap[c.id] || 0;
+    accountMap[aid].spend_pence += spend;
+    accountMap[aid].leads += leads;
+    accountMap[aid].contacts += contacts;
+    accountMap[aid].replies += replies;
+    accountMap[aid].campaigns.push({ id: c.id, name: c.name, spend_pence: spend, leads, contacts, replies });
+  });
+
+  const perCompany = Object.values(accountMap);
+  const totals = perCompany.reduce((acc, c) => ({
+    spend_pence: acc.spend_pence + c.spend_pence,
+    leads: acc.leads + c.leads,
+    contacts: acc.contacts + c.contacts,
+    replies: acc.replies + c.replies,
+  }), { spend_pence: 0, leads: 0, contacts: 0, replies: 0 });
+
+  res.json({ totals, perCompany });
+});
+
 // GET /api/admin/health
 router.get('/health', async (req, res) => {
   const user_details_id = req.query.user_details_id;
