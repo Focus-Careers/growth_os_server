@@ -1,12 +1,42 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
 
-// Approximate cost per API call, in pence (GBP)
-// Using ~$1.25 = £1 conversion
-const COST_PER_CALL_PENCE = {
-  serper: 0.10,  // $60 / 50,000 credits = $0.0012/call → ~0.10p
-  haiku:  0.80,  // ~$0.01 per scoring batch (rough estimate)
-  apollo: 2.00,  // $99 / 4,000 credits = $0.02475/credit → ~2.0p
+// USD cost per API call
+const COST_PER_CALL_USD = {
+  serper: 0.0012,    // $60 / 50,000 credits
+  haiku:  0.0100,    // ~$0.01 per scoring batch (rough estimate)
+  apollo: 0.024750,  // $99 / 4,000 credits
 };
+
+// Live GBP/USD rate cache (refreshed every 12 hours)
+let _gbpPerUsd = null;
+let _rateLastFetched = 0;
+const RATE_TTL_MS = 12 * 60 * 60 * 1000;
+const RATE_FALLBACK = 0.79; // fallback if API is unreachable
+
+async function getGbpPerUsd() {
+  if (_gbpPerUsd && Date.now() - _rateLastFetched < RATE_TTL_MS) return _gbpPerUsd;
+  try {
+    const res = await fetch('https://api.frankfurter.app/latest?from=USD&to=GBP');
+    const data = await res.json();
+    _gbpPerUsd = data.rates.GBP;
+    _rateLastFetched = Date.now();
+    console.log(`[cost_tracker] GBP/USD rate updated: ${_gbpPerUsd}`);
+  } catch (err) {
+    if (!_gbpPerUsd) _gbpPerUsd = RATE_FALLBACK;
+    console.warn('[cost_tracker] Failed to fetch GBP/USD rate, using fallback:', err.message);
+  }
+  return _gbpPerUsd;
+}
+
+// Returns cost per call in pence using live exchange rate
+async function costPence() {
+  const rate = await getGbpPerUsd();
+  return {
+    serper: COST_PER_CALL_USD.serper * rate * 100,
+    haiku:  COST_PER_CALL_USD.haiku  * rate * 100,
+    apollo: COST_PER_CALL_USD.apollo * rate * 100,
+  };
+}
 
 /**
  * Open a new lead generation run record.
@@ -59,15 +89,16 @@ export async function increment(runId, increments) {
     updates[field] = (current[field] ?? 0) + (increments[field] ?? 0);
   }
 
-  // Recalculate estimated cost from updated API usage
+  // Recalculate estimated cost from updated API usage using live GBP/USD rate
   const serper = updates.serper_calls_used ?? current.serper_calls_used ?? 0;
   const haiku  = updates.haiku_calls_used  ?? current.haiku_calls_used  ?? 0;
   const apollo = updates.apollo_credits_used ?? current.apollo_credits_used ?? 0;
+  const pence  = await costPence();
 
   updates.estimated_cost_pence = Math.round(
-    serper * COST_PER_CALL_PENCE.serper +
-    haiku  * COST_PER_CALL_PENCE.haiku  +
-    apollo * COST_PER_CALL_PENCE.apollo
+    serper * pence.serper +
+    haiku  * pence.haiku  +
+    apollo * pence.apollo
   );
 
   const { error: updateError } = await getSupabaseAdmin()
