@@ -40,7 +40,7 @@ const MAX_CLASSIFY_CONCURRENCY = 8;
 const MAX_SCORE_CONCURRENCY    = 8;
 const MAX_FANOUT_LISTINGS = 30;
 const TARGET_LEAD_COUNT   = 100;
-const APOLLO_REVEALS_CAP  = 3;
+const APOLLO_REVEALS_CAP  = 5;
 
 // ─── Main skill entry point ───────────────────────────────────────────────────
 

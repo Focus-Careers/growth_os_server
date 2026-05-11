@@ -24,7 +24,7 @@ import { increment } from '../../../../lib/cost_tracker.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 
 const MAX_CONTACTS_PER_COMPANY = 10;
-const DEFAULT_REVEAL_CAP = 3;
+const DEFAULT_REVEAL_CAP = 5;
 
 // Emails that look like real addresses but are placeholders
 const DUMMY_EMAIL_DOMAINS = new Set([
@@ -108,7 +108,9 @@ export async function executeSkill({
     console.warn(`[enrich_target] Apollo company error for ${domain}:`, err.message);
   }
 
-  const enrichmentUpdate = { enriched_at: new Date().toISOString(), enrichment_source: 'apollo' };
+  // enriched_at is set later, only if we actually find contacts — so targets
+  // with zero contacts remain retryable as Apollo's database grows.
+  const enrichmentUpdate = { enrichment_source: 'apollo' };
   if (apolloCompany) {
     if (apolloCompany.short_description) enrichmentUpdate.company_description = apolloCompany.short_description;
     if (apolloCompany.industry)          enrichmentUpdate.industry = apolloCompany.industry;
@@ -285,6 +287,10 @@ export async function executeSkill({
         confidence_label: 'generic_mailbox',
       });
     }
+  }
+
+  if (savedContacts.length > 0) {
+    await admin.from('targets').update({ enriched_at: new Date().toISOString() }).eq('id', target_id);
   }
 
   console.log(`[enrich_target] Done — ${savedContacts.length} contacts saved for ${domain}`);
