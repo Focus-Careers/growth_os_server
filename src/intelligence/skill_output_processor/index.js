@@ -76,33 +76,16 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
       const highScoreCount = output.high_score_count ?? 0;
       const totalTargets = output.total_targets ?? 0;
 
-      // Check if THIS ITP already has 10+ approved leads — if so, auto-approve new ones
-      const { count: existingApproved } = await getSupabaseAdmin()
-        .from('leads').select('id', { count: 'exact', head: true })
-        .eq('itp_id', output.itp_id)
-        .eq('approved', true);
-      const alreadyValidated = (existingApproved ?? 0) >= 10;
-
-      if (alreadyValidated && output.itp_id) {
-        // Auto-approve all new unapproved high-score leads
-        await getSupabaseAdmin()
-          .from('leads')
-          .update({ approved: true })
-          .eq('itp_id', output.itp_id)
-          .gte('score', 70)
-          .is('approved', null)
-          .is('rejected', null);
-        console.log(`[skill_output] Auto-approved new leads for validated ITP`);
-      }
-
+      // Auto-approval removed. All ten_leads results go through the approval sidebar.
+      // confirmed_positive is set by the sidebar when the user explicitly approves.
       await sendAppMessage({
         type: 'skill_output',
         employee,
         skill: skill_name,
         user_details_id,
-        sidebar: (!alreadyValidated && highScoreCount > 0) ? 'approve_targets' : null,
-        navigate_to: alreadyValidated ? 'Belfort' : null,
-        output: { high_score_count: highScoreCount, total_targets: totalTargets, itp_id: output.itp_id, auto_approved: alreadyValidated },
+        sidebar: highScoreCount > 0 ? 'approve_targets' : null,
+        navigate_to: null,
+        output: { high_score_count: highScoreCount, total_targets: totalTargets, itp_id: output.itp_id },
       });
       break;
     }

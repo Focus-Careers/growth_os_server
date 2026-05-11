@@ -14,10 +14,7 @@ const POLL_INTERVAL_MS = 5000;
 const POLL_TIMEOUT_MS  = 2 * 60 * 60 * 1000; // 2 hours per run
 
 const CAMPAIGNS = [
-  'fdfd3209-a3dc-459d-85a2-a9cb2c44894b',
-  '43c848e7-33d8-4e22-b98e-03169c5038dc',
-  'a4db0ecb-b5a6-4a9b-8480-d6d9cdfd340b',
-  'f332e12c-9ee0-40c7-a113-2ae6ba4c82a0',
+  'b73d0f4a-f05a-47ff-8159-15cce09e85fe'
 ];
 
 function getSupabase() {
