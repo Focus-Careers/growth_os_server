@@ -2,12 +2,11 @@
  * target_finder_100_leads — Phase 3 rewrite
  *
  * Production-quality orchestrator. Finds ~100 auto-approved leads ready for
- * outbound campaigns. Uses the same shared primitives as ten_leads but with a
- * larger search pool, Companies House matching, and full evidence scoring.
+ * outbound campaigns. Runs up to MAX_ROUNDS search rounds, each generating
+ * fresh queries that avoid prior ones, until the lead target is hit.
  *
- * Pipeline:
- *   enrichConfirmedPositives (calibration leads first) →
- *   generateQueryProfile → runSearchQueries (300 results) →
+ * Pipeline per round:
+ *   generateQueryProfile → runSearchQueries →
  *   scrapeSite (parallel) → classifyLiveness (parallel) →
  *   directoryFanout (one level) → matchToCompaniesHouse (parallel) →
  *   scoreCandidate (full evidence + few-shot, parallel) →
@@ -33,14 +32,15 @@ import { openRun, increment, closeRun } from '../../../../lib/cost_tracker.js';
 import { filterContactsInActiveCampaigns } from '../../../../utils/campaign_contacts.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 
-const RESULTS_PER_QUERY   = 10;
-const MAX_SEARCH_RESULTS  = 300;
+const RESULTS_PER_QUERY        = 10;
+const MAX_SEARCH_RESULTS       = 300;
 const MAX_SCRAPE_CONCURRENCY   = 10;
 const MAX_CLASSIFY_CONCURRENCY = 8;
 const MAX_SCORE_CONCURRENCY    = 8;
-const MAX_FANOUT_LISTINGS = 30;
-const TARGET_LEAD_COUNT   = 100;
-const APOLLO_REVEALS_CAP  = 5;
+const MAX_FANOUT_LISTINGS      = 30;
+const TARGET_LEAD_COUNT        = 100;
+const APOLLO_REVEALS_CAP       = 5;
+const MAX_ROUNDS               = 3;
 
 // ─── Main skill entry point ───────────────────────────────────────────────────
 
@@ -73,8 +73,6 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id = null
 
   try {
     // ── Step 0: Enrich confirmed-positive calibration leads ────────────
-    // Phase 2 calibration leaves targets un-enriched. Enrich them first so
-    // they are ready for the campaign before we find new leads.
     await progress(user_details_id, 'Enriching calibration leads…', 3);
     await enrichConfirmedPositives({ admin, itp, user_details_id, campaign_id, runId });
 
@@ -86,17 +84,10 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id = null
       }
     }
 
-    // ── Step 1: Query profile ───────────────────────────────────────────
-    await progress(user_details_id, 'Building search profile…', 6);
-    const queryProfile = await generateQueryProfile({ itp, account });
-    const directoryWhitelist = queryProfile.directory_whitelist ?? [];
-
-    // ── Step 2: Account-level dedup ─────────────────────────────────────
+    // ── Step 2: Account-level dedup (once for the whole run) ────────────
     const seenDomains = await buildDedupSet(admin, userDetails.account_id);
 
     // ── Step 2.5: Score existing account targets not yet linked to this ITP ──
-    // Targets discovered for other ITPs on this account are re-scored here.
-    // If they pass threshold, a new lead record is created for this ITP.
     await progress(user_details_id, 'Checking existing targets against ITP…', 8);
     const internalLeads = await scoreInternalTargets({ admin, itp, account, runId, seenDomains });
     console.log(`[100_leads] Internal scoring: ${internalLeads.length} existing targets qualified`);
@@ -134,214 +125,36 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id = null
     }
     await increment(runId, { haiku_calls_used: internalLeads.length });
 
-    // ── Step 3: Search ──────────────────────────────────────────────────
-    await progress(user_details_id, 'Searching for candidates…', 10);
-    const { results, serper_calls, queries_used } = await runSearchQueries({
-      queries: queryProfile.search_queries ?? [],
-      results_per_query: RESULTS_PER_QUERY,
-      location: itp.location,
-      max_results: MAX_SEARCH_RESULTS,
-      seen_domains: seenDomains,
-    });
-    await increment(runId, { serper_calls_used: serper_calls });
-    console.log(`[100_leads] ${results.length} search results after dedup`);
-
-    // Persist used queries so the next run generates different ones
-    if (queries_used.length > 0) {
-      await admin.from('target_finder_google_search_prompts').insert(
-        queries_used.map(query => ({ itp: itp.id, query }))
-      );
-    }
-
-    if (results.length === 0) {
-      await closeRun(runId, 'completed');
-      return finalize({ admin, itp, user_details_id, targetCount, runId });
-    }
-
-    // ── Step 4: Scrape in parallel ──────────────────────────────────────
-    await progress(user_details_id, `Scraping ${results.length} pages…`, 18);
-    const scraped = await runParallel(
-      results,
-      r => scrapeSite({ domain: r.domain, page_set: 'homepage_plus_about_contact' })
-          .then(s => ({ result: r, scraped: s })),
-      MAX_SCRAPE_CONCURRENCY
-    );
-
-    // ── Step 5: Classify in parallel ────────────────────────────────────
-    await progress(user_details_id, 'Analysing pages…', 32);
-    const classified = await runParallel(
-      scraped,
-      ({ result, scraped: s }) =>
-        classifyLiveness({ url: result.url, scraped: s, directory_whitelist: directoryWhitelist })
-          .then(c => ({ result, scraped: s, classification: c })),
-      MAX_CLASSIFY_CONCURRENCY
-    );
-    await increment(runId, { haiku_calls_used: classified.length });
-
-    // ── Step 6: Directory fan-out (one level, no recursion) ─────────────
-    await progress(user_details_id, 'Following directory listings…', 44);
-    const candidatePool = [];
-    const fanoutTasks = [];
-
-    for (const item of classified) {
-      const cls = item.classification.classification;
-
-      if (cls === CLASSIFICATION.REAL_OPERATING_BUSINESS) {
-        candidatePool.push({
-          url: item.result.url,
-          domain: item.result.domain,
-          title: item.result.title,
-          scraped: item.scraped,
-          classification: item.classification,
-          discovery_source: 'serper_direct',
-          directory_only: false,
-        });
-      } else if (cls === CLASSIFICATION.WHITELISTED_DIRECTORY) {
-        fanoutTasks.push(item);
-      }
-      // everything else: drop
-    }
-
-    for (const dirItem of fanoutTasks) {
-      const listings = await extractDirectoryListings({
-        url: dirItem.result.url,
-        scraped: dirItem.scraped,
-        directory_identifier: dirItem.result.domain,
-      });
-      await increment(runId, { haiku_calls_used: 1 });
-
-      const toProcess = listings.slice(0, MAX_FANOUT_LISTINGS);
-      for (const listing of toProcess) {
-        if (listing.website) {
-          let domain;
-          try { domain = new URL(listing.website).hostname.replace(/^www\./, ''); } catch { continue; }
-          if (!domain || seenDomains.has(domain)) continue;
-          seenDomains.add(domain);
-
-          const s = await scrapeSite({ domain, page_set: 'homepage_plus_about_contact' });
-          const c = await classifyLiveness({ url: listing.website, scraped: s, directory_whitelist: directoryWhitelist });
-          await increment(runId, { haiku_calls_used: 1 });
-
-          if (c.classification === CLASSIFICATION.REAL_OPERATING_BUSINESS) {
-            candidatePool.push({
-              url: listing.website,
-              domain,
-              title: listing.name,
-              scraped: s,
-              classification: c,
-              discovery_source: 'directory_fanout',
-              directory_only: false,
-            });
-          }
-        } else {
-          // Directory-only listing — no website
-          candidatePool.push({
-            url: listing.listing_url,
-            domain: null,
-            title: listing.name,
-            scraped: null,
-            classification: null,
-            discovery_source: 'directory_fanout',
-            directory_only: true,
-            directory_listing: listing,
-          });
-        }
-      }
-    }
-
-    console.log(`[100_leads] ${candidatePool.length} candidates after classification + fanout`);
-
-    if (candidatePool.length === 0) {
-      await closeRun(runId, 'completed');
-      return finalize({ admin, itp, user_details_id, targetCount, runId });
-    }
-
-    // ── Step 7: CH match in parallel ────────────────────────────────────
-    // CH match gives the scorer real evidence: SIC codes, founding date,
-    // postcode, officer names. Failures are non-fatal — candidate proceeds
-    // with ch.matched=false.
-    await progress(user_details_id, `Matching ${candidatePool.length} candidates to Companies House…`, 54);
-    const chMatched = await runParallel(
-      candidatePool,
-      async candidate => {
-        if (candidate.directory_only) return { ...candidate, ch: { matched: false } };
-        const metadata = candidate.classification?.extracted_metadata ?? {};
-        const ch = await matchToCompaniesHouse({
-          name: candidate.title,
-          postcode: metadata.postcodes?.[0] ?? candidate.directory_listing?.location ?? null,
-          registration_number: metadata.registration_number ?? null,
-          phone: metadata.phones?.[0] ?? null,
-        }).catch(() => ({ matched: false }));
-        return { ...candidate, ch };
-      },
-      MAX_SCORE_CONCURRENCY
-    );
-
-    // ── Step 8: Load confirmed positives for few-shot ───────────────────
-    const confirmedPositives = await loadConfirmedPositives(admin, itp.id);
-
-    // ── Step 9: Score in parallel ───────────────────────────────────────
-    await progress(user_details_id, `Scoring ${chMatched.length} candidates…`, 63);
-    const scored = await runParallel(
-      chMatched,
-      candidate => {
-        return scoreCandidate({
-          itp,
-          account,
-          evidence: {
-            company_name:         candidate.title ?? candidate.domain ?? 'Unknown',
-            domain:               candidate.domain,
-            website_summary:      candidate.scraped?.all_text?.slice(0, 800) ?? null,
-            directory_only:       candidate.directory_only,
-            ch_data:              candidate.ch?.ch_record ?? null,
-            ch_match_confidence:  candidate.ch?.match_confidence ?? null,
-          },
-          confirmed_positives: confirmedPositives,
-        }).then(s => ({ ...candidate, ...s }));
-      },
-      MAX_SCORE_CONCURRENCY
-    );
-    await increment(runId, { haiku_calls_used: candidatePool.length });
-
-    // ── Step 10: Filter tier A/B, sort by score descending ──────────────
-    const qualified = scored
-      .filter(c => c.tier === TIER.A || c.tier === TIER.B)
-      .sort((a, b) => b.score - a.score);
-
-    console.log(`[100_leads] ${qualified.length} tier A/B candidates (from ${scored.length} scored)`);
-
-    // ── Step 11: Persist + enrich + sync to campaign ────────────────────
-    await progress(user_details_id, `Enriching ${qualified.length} qualified leads…`, 73);
-    let enrichedCount = 0;
-
-    for (const candidate of qualified) {
+    // ── Steps 3–11: Search rounds ───────────────────────────────────────
+    for (let round = 1; round <= MAX_ROUNDS; round++) {
       const currentCount = await countApprovedLeads(admin, itp.id);
       if (currentCount >= targetCount) break;
 
-      const saved = await persistCandidate(admin, candidate, itp, userDetails.account_id);
-      if (!saved) continue;
+      if (round > 1) {
+        console.log(`[100_leads] Round ${round}/${MAX_ROUNDS} — ${currentCount}/${targetCount} leads so far`);
+      }
 
-      // Track domain so subsequent iterations in this run stay deduplicated
-      if (candidate.domain) seenDomains.add(candidate.domain);
+      // Re-fetch ITP to pick up search_profile updates written by previous round
+      const { data: freshItp } = await admin.from('itp').select('*').eq('id', itp.id).single();
 
-      try {
-        const enrichResult = await runEnrichTarget({
-          target_id:          saved.target_id,
-          user_details_id,
-          silent:             true,
-          runId,
-          apollo_reveals_cap: APOLLO_REVEALS_CAP,
-        });
-        await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
-        enrichedCount++;
-        console.log(`[100_leads] Enriched ${enrichedCount}: ${candidate.title ?? candidate.domain}`);
-      } catch (err) {
-        // Target + lead already saved — partial result is acceptable
-        console.error(`[100_leads] Enrich error for ${candidate.title ?? candidate.domain}:`, err.message);
+      const exhausted = await runSearchRound({
+        admin,
+        itp:            freshItp ?? itp,
+        account,
+        user_details_id,
+        campaign_id,
+        runId,
+        seenDomains,
+        targetCount,
+        round,
+      });
+
+      if (exhausted) {
+        console.log(`[100_leads] Round ${round}: no results — stopping early`);
+        break;
       }
     }
 
-    console.log(`[100_leads] Enrichment complete — ${enrichedCount} new leads enriched`);
     await closeRun(runId, 'completed');
     return finalize({ admin, itp, user_details_id, targetCount, runId });
 
@@ -350,6 +163,214 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id = null
     await closeRun(runId, 'failed', err.message);
     throw err;
   }
+}
+
+// ─── Search round ─────────────────────────────────────────────────────────────
+
+/**
+ * Run one full search → classify → score → persist round.
+ * Mutates seenDomains in place as candidates are saved.
+ * Returns true if the round should stop early (no results found).
+ */
+async function runSearchRound({ admin, itp, account, user_details_id, campaign_id, runId, seenDomains, targetCount, round }) {
+  // Progress percentages spread evenly across rounds: round 1 → 10–38%, round 2 → 40–68%, round 3 → 70–95%
+  const pct = (fraction) => Math.min(99, Math.round(10 + (round - 1) * 30 + fraction * 28));
+
+  // ── Step 1: Query profile ─────────────────────────────────────────────
+  await progress(user_details_id, `Round ${round}: Building search profile…`, pct(0));
+  const queryProfile = await generateQueryProfile({ itp, account });
+  const directoryWhitelist = queryProfile.directory_whitelist ?? [];
+
+  // ── Step 3: Search ────────────────────────────────────────────────────
+  await progress(user_details_id, `Round ${round}: Searching for candidates…`, pct(0.1));
+  const { results, serper_calls, queries_used } = await runSearchQueries({
+    queries:           queryProfile.search_queries ?? [],
+    results_per_query: RESULTS_PER_QUERY,
+    location:          itp.location,
+    max_results:       MAX_SEARCH_RESULTS,
+    seen_domains:      seenDomains,
+  });
+  await increment(runId, { serper_calls_used: serper_calls });
+  console.log(`[100_leads] Round ${round}: ${results.length} search results after dedup`);
+
+  if (queries_used.length > 0) {
+    await admin.from('target_finder_google_search_prompts').insert(
+      queries_used.map(query => ({ itp: itp.id, query }))
+    );
+  }
+
+  if (results.length === 0) return true;
+
+  // ── Step 4: Scrape ────────────────────────────────────────────────────
+  await progress(user_details_id, `Round ${round}: Scraping ${results.length} pages…`, pct(0.2));
+  const scraped = await runParallel(
+    results,
+    r => scrapeSite({ domain: r.domain, page_set: 'homepage_plus_about_contact' })
+        .then(s => ({ result: r, scraped: s })),
+    MAX_SCRAPE_CONCURRENCY
+  );
+
+  // ── Step 5: Classify ──────────────────────────────────────────────────
+  await progress(user_details_id, `Round ${round}: Analysing pages…`, pct(0.4));
+  const classified = await runParallel(
+    scraped,
+    ({ result, scraped: s }) =>
+      classifyLiveness({ url: result.url, scraped: s, directory_whitelist: directoryWhitelist })
+        .then(c => ({ result, scraped: s, classification: c })),
+    MAX_CLASSIFY_CONCURRENCY
+  );
+  await increment(runId, { haiku_calls_used: classified.length });
+
+  // ── Step 6: Directory fanout ──────────────────────────────────────────
+  await progress(user_details_id, `Round ${round}: Following directory listings…`, pct(0.5));
+  const candidatePool = [];
+  const fanoutTasks = [];
+
+  for (const item of classified) {
+    const cls = item.classification.classification;
+    if (cls === CLASSIFICATION.REAL_OPERATING_BUSINESS) {
+      candidatePool.push({
+        url:              item.result.url,
+        domain:           item.result.domain,
+        title:            item.result.title,
+        scraped:          item.scraped,
+        classification:   item.classification,
+        discovery_source: 'serper_direct',
+        directory_only:   false,
+      });
+    } else if (cls === CLASSIFICATION.WHITELISTED_DIRECTORY) {
+      fanoutTasks.push(item);
+    }
+  }
+
+  for (const dirItem of fanoutTasks) {
+    const listings = await extractDirectoryListings({
+      url:                  dirItem.result.url,
+      scraped:              dirItem.scraped,
+      directory_identifier: dirItem.result.domain,
+    });
+    await increment(runId, { haiku_calls_used: 1 });
+
+    const toProcess = listings.slice(0, MAX_FANOUT_LISTINGS);
+    for (const listing of toProcess) {
+      if (listing.website) {
+        let domain;
+        try { domain = new URL(listing.website).hostname.replace(/^www\./, ''); } catch { continue; }
+        if (!domain || seenDomains.has(domain)) continue;
+        seenDomains.add(domain);
+
+        const s = await scrapeSite({ domain, page_set: 'homepage_plus_about_contact' });
+        const c = await classifyLiveness({ url: listing.website, scraped: s, directory_whitelist: directoryWhitelist });
+        await increment(runId, { haiku_calls_used: 1 });
+
+        if (c.classification === CLASSIFICATION.REAL_OPERATING_BUSINESS) {
+          candidatePool.push({
+            url:              listing.website,
+            domain,
+            title:            listing.name,
+            scraped:          s,
+            classification:   c,
+            discovery_source: 'directory_fanout',
+            directory_only:   false,
+          });
+        }
+      } else {
+        candidatePool.push({
+          url:               listing.listing_url,
+          domain:            null,
+          title:             listing.name,
+          scraped:           null,
+          classification:    null,
+          discovery_source:  'directory_fanout',
+          directory_only:    true,
+          directory_listing: listing,
+        });
+      }
+    }
+  }
+
+  console.log(`[100_leads] Round ${round}: ${candidatePool.length} candidates after classification + fanout`);
+  if (candidatePool.length === 0) return true;
+
+  // ── Step 7: CH match ──────────────────────────────────────────────────
+  await progress(user_details_id, `Round ${round}: Matching to Companies House…`, pct(0.6));
+  const chMatched = await runParallel(
+    candidatePool,
+    async candidate => {
+      if (candidate.directory_only) return { ...candidate, ch: { matched: false } };
+      const metadata = candidate.classification?.extracted_metadata ?? {};
+      const ch = await matchToCompaniesHouse({
+        name:                candidate.title,
+        postcode:            metadata.postcodes?.[0] ?? candidate.directory_listing?.location ?? null,
+        registration_number: metadata.registration_number ?? null,
+        phone:               metadata.phones?.[0] ?? null,
+      }).catch(() => ({ matched: false }));
+      return { ...candidate, ch };
+    },
+    MAX_SCORE_CONCURRENCY
+  );
+
+  // ── Step 8: Confirmed positives for few-shot ──────────────────────────
+  const confirmedPositives = await loadConfirmedPositives(admin, itp.id);
+
+  // ── Step 9: Score ─────────────────────────────────────────────────────
+  await progress(user_details_id, `Round ${round}: Scoring ${chMatched.length} candidates…`, pct(0.7));
+  const scored = await runParallel(
+    chMatched,
+    candidate => scoreCandidate({
+      itp,
+      account,
+      evidence: {
+        company_name:        candidate.title ?? candidate.domain ?? 'Unknown',
+        domain:              candidate.domain,
+        website_summary:     candidate.scraped?.all_text?.slice(0, 800) ?? null,
+        directory_only:      candidate.directory_only,
+        ch_data:             candidate.ch?.ch_record ?? null,
+        ch_match_confidence: candidate.ch?.match_confidence ?? null,
+      },
+      confirmed_positives: confirmedPositives,
+    }).then(s => ({ ...candidate, ...s })),
+    MAX_SCORE_CONCURRENCY
+  );
+  await increment(runId, { haiku_calls_used: candidatePool.length });
+
+  // ── Step 10: Filter tier A/B, sort by score ───────────────────────────
+  const qualified = scored
+    .filter(c => c.tier === TIER.A || c.tier === TIER.B)
+    .sort((a, b) => b.score - a.score);
+  console.log(`[100_leads] Round ${round}: ${qualified.length} tier A/B candidates (from ${scored.length} scored)`);
+
+  // ── Step 11: Persist + enrich + sync to campaign ──────────────────────
+  await progress(user_details_id, `Round ${round}: Enriching ${qualified.length} qualified leads…`, pct(0.8));
+  let enrichedCount = 0;
+
+  for (const candidate of qualified) {
+    const currentCount = await countApprovedLeads(admin, itp.id);
+    if (currentCount >= targetCount) break;
+
+    const saved = await persistCandidate(admin, candidate, itp, account.id);
+    if (!saved) continue;
+
+    if (candidate.domain) seenDomains.add(candidate.domain);
+
+    try {
+      const enrichResult = await runEnrichTarget({
+        target_id:          saved.target_id,
+        user_details_id,
+        silent:             true,
+        runId,
+        apollo_reveals_cap: APOLLO_REVEALS_CAP,
+      });
+      await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
+      enrichedCount++;
+      console.log(`[100_leads] Round ${round}: Enriched ${enrichedCount}: ${candidate.title ?? candidate.domain}`);
+    } catch (err) {
+      console.error(`[100_leads] Enrich error for ${candidate.title ?? candidate.domain}:`, err.message);
+    }
+  }
+
+  console.log(`[100_leads] Round ${round}: complete — ${enrichedCount} new leads enriched`);
+  return false;
 }
 
 // ─── Step 0 helper: enrich confirmed-positive calibration leads ───────────────
@@ -600,7 +621,6 @@ async function persistCandidate(admin, candidate, itp, accountId) {
       score_reason:     candidate.reasoning ?? null,
       discovery_source: candidate.discovery_source ?? 'serper_direct',
       approved:         true,
-      // confirmed_positive left null — only set by human approval in calibration
     })
     .select('id')
     .single();
@@ -638,9 +658,9 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
 
   const crossFilteredIds = campaignRow?.account_id
     ? await filterContactsInActiveCampaigns({
-        accountId:            campaignRow.account_id,
-        currentCampaignId:    campaign_id,
-        candidateContactIds:  newContacts.map(c => c.id),
+        accountId:           campaignRow.account_id,
+        currentCampaignId:   campaign_id,
+        candidateContactIds: newContacts.map(c => c.id),
       })
     : newContacts.map(c => c.id);
   const crossFilteredSet = new Set(crossFilteredIds);
