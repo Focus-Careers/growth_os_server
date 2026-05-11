@@ -33,13 +33,17 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export async function generateQueryProfile({ itp, account, force = false }) {
   const admin = getSupabaseAdmin();
 
-  // Load all previously used queries for this ITP
+  // Load recent previously used queries — capped at 2 runs' worth to avoid
+  // over-constraining the LLM. Passing all historical queries causes increasingly
+  // poor query generation as the list grows.
+  const PRIOR_QUERY_CAP = 50;
   const { data: priorRows } = await admin
     .from('target_finder_google_search_prompts')
     .select('query')
     .eq('itp', itp.id)
-    .order('created_at', { ascending: true });
-  const prior_search_queries = (priorRows ?? []).map(r => r.query);
+    .order('created_at', { ascending: false })
+    .limit(PRIOR_QUERY_CAP);
+  const prior_search_queries = (priorRows ?? []).map(r => r.query).reverse();
 
   // Use cached stable fields if available — only regenerate when forced or missing
   const cachedStable = (!force && itp.search_profile && isStableProfileValid(itp.search_profile))
