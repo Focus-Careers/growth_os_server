@@ -118,7 +118,12 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id = null
           runId,
           apollo_reveals_cap: APOLLO_REVEALS_CAP,
         });
-        await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
+        if (enrichResult.already_enriched) {
+          const { data: existingContacts } = await admin.from('contacts').select('id').eq('target_id', target.id);
+          await addContactsToCampaign(campaign_id, { contacts: existingContacts ?? [] }, user_details_id);
+        } else {
+          await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
+        }
       } catch (err) {
         console.error(`[100_leads] Enrich error for internal target ${target.domain}:`, err.message);
       }
@@ -361,7 +366,13 @@ async function runSearchRound({ admin, itp, account, user_details_id, campaign_i
         runId,
         apollo_reveals_cap: APOLLO_REVEALS_CAP,
       });
-      await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
+      if (enrichResult.already_enriched) {
+        // Target was enriched in a previous run — load existing contacts and add to campaign
+        const { data: existingContacts } = await admin.from('contacts').select('id').eq('target_id', saved.target_id);
+        await addContactsToCampaign(campaign_id, { contacts: existingContacts ?? [] }, user_details_id);
+      } else {
+        await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
+      }
       enrichedCount++;
       console.log(`[100_leads] Round ${round}: Enriched ${enrichedCount}: ${candidate.title ?? candidate.domain}`);
     } catch (err) {
