@@ -76,23 +76,35 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
       const highScoreCount = output.high_score_count ?? 0;
       const totalTargets = output.total_targets ?? 0;
 
-      // Check if THIS ITP already has 10+ approved leads — if so, auto-approve new ones
+      // Check if THIS ITP already has 10+ approved leads — if so, potentially auto-approve new ones
       const { count: existingApproved } = await getSupabaseAdmin()
         .from('leads').select('id', { count: 'exact', head: true })
         .eq('itp_id', output.itp_id)
         .eq('approved', true);
       const alreadyValidated = (existingApproved ?? 0) >= 10;
 
+      let didAutoApprove = false;
       if (alreadyValidated && output.itp_id) {
-        // Auto-approve all new unapproved high-score leads
-        await getSupabaseAdmin()
-          .from('leads')
-          .update({ approved: true })
-          .eq('itp_id', output.itp_id)
-          .gte('score', 70)
-          .is('approved', null)
-          .is('rejected', null);
-        console.log(`[skill_output] Auto-approved new leads for validated ITP`);
+        const { data: itpData } = await getSupabaseAdmin()
+          .from('itp')
+          .select('account_id, account(auto_approve_leads)')
+          .eq('id', output.itp_id)
+          .single();
+        const autoApproveEnabled = itpData?.account?.auto_approve_leads ?? false;
+
+        if (autoApproveEnabled) {
+          await getSupabaseAdmin()
+            .from('leads')
+            .update({ approved: true })
+            .eq('itp_id', output.itp_id)
+            .gte('score', 70)
+            .is('approved', null)
+            .is('rejected', null);
+          didAutoApprove = true;
+          console.log(`[skill_output] Auto-approved new leads for validated ITP`);
+        } else {
+          console.log(`[skill_output] Auto-approve disabled for account — leads require manual approval`);
+        }
       }
 
       await sendAppMessage({
@@ -102,7 +114,7 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
         user_details_id,
         sidebar: (!alreadyValidated && highScoreCount > 0) ? 'approve_targets' : null,
         navigate_to: alreadyValidated ? 'Belfort' : null,
-        output: { high_score_count: highScoreCount, total_targets: totalTargets, itp_id: output.itp_id, auto_approved: alreadyValidated },
+        output: { high_score_count: highScoreCount, total_targets: totalTargets, itp_id: output.itp_id, auto_approved: didAutoApprove },
       });
       break;
     }
