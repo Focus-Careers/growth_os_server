@@ -33,6 +33,7 @@ export async function runSearchQueries({
 
   const dedup = seen_domains instanceof Set ? seen_domains : new Set();
   const results = [];
+  const queriesUsed = [];
   let queriesRun = 0;
 
   for (const query of queries) {
@@ -64,6 +65,7 @@ export async function runSearchQueries({
     }
 
     queriesRun++;
+    queriesUsed.push(query);
 
     for (const item of serperData.organic ?? []) {
       if (max_results != null && results.length >= max_results) break;
@@ -94,5 +96,5 @@ export async function runSearchQueries({
   }
 
   console.log(`[search_runner] Completed: ${results.length} unique results from ${queriesRun} Serper calls`);
-  return { results, queries_run: queriesRun, serper_calls: queriesRun };
+  return { results, queries_used: queriesUsed, queries_run: queriesRun, serper_calls: queriesRun };
 }

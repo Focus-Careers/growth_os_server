@@ -136,7 +136,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id = null
 
     // ── Step 3: Search ──────────────────────────────────────────────────
     await progress(user_details_id, 'Searching for candidates…', 10);
-    const { results, serper_calls } = await runSearchQueries({
+    const { results, serper_calls, queries_used } = await runSearchQueries({
       queries: queryProfile.search_queries ?? [],
       results_per_query: RESULTS_PER_QUERY,
       location: itp.location,
@@ -145,6 +145,13 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id = null
     });
     await increment(runId, { serper_calls_used: serper_calls });
     console.log(`[100_leads] ${results.length} search results after dedup`);
+
+    // Persist used queries so the next run generates different ones
+    if (queries_used.length > 0) {
+      await admin.from('target_finder_google_search_prompts').insert(
+        queries_used.map(query => ({ itp: itp.id, query }))
+      );
+    }
 
     if (results.length === 0) {
       await closeRun(runId, 'completed');
