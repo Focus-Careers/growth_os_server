@@ -17,12 +17,13 @@ Query design rules:
 - **One signal per query**: use either a trade type OR a geographic area OR an accreditation — not all three combined. Stacking signals kills yield.
 - **Short and broad**: 3–6 words is usually enough. Longer queries with many modifiers return almost nothing.
 - **Negative modifiers sparingly**: only add `-jobs -hiring` if jobs boards are a persistent problem for this ITP. Do not stack multiple negatives (`-directory -"find a" -reviews -yell`) — this reduces yield dramatically.
-- **Watering-hole queries**: use `site:` on trade association member lists and certification registers (e.g. `site:gas-safe-register.co.uk`, `site:niceic.com/find-a-contractor`). These reliably return real businesses.
-- **Geographic variation**: where location is relevant, vary the regions/cities across queries rather than fixing every query to the same city.
+- **Geographic variation**: vary the regions/cities across queries — use different towns and cities each time, not the same location repeatedly. Cover a mix of large cities, mid-size towns, and regional areas.
+- **Trade variation**: vary the trade type or service description across queries rather than repeating the same term.
+- Do NOT use `site:` queries — they return very few results and are not useful here.
 - Do NOT repeat or closely paraphrase any query in `prior_search_queries`.
 
-Good examples: `"NICEIC approved electricians"`, `"Gas Safe heating engineer domestic"`, `"FMB member builder North West"`, `"site:gas-safe-register.co.uk plumber Leeds"`
-Bad examples: `"emergency electrician same day London domestic installer -directory -\"find a\" -reviews -yell -checkatrade -jobs -hiring"` (too specific, too many negatives, near-zero yield)
+Good examples: `"electricians Manchester"`, `"Gas Safe heating engineer Bristol"`, `"FMB member builder North West"`, `"solar panel installers Leeds"`, `"plumbers Sheffield"`
+Bad examples: `"emergency electrician same day London domestic installer -directory -\"find a\" -reviews -yell -checkatrade -jobs -hiring"` (too specific, too many negatives, near-zero yield), `"site:gas-safe-register.co.uk plumber Leeds"` (site: queries return almost nothing)
 
 **`buyer_descriptions`** (array of 6–10 strings)
 Specific descriptions of the types of businesses that would buy from this company. Be specific: not "construction companies" but "commercial fit-out contractors who install suspended ceilings and partitions". Each description should target a slightly different buyer type to ensure diversity.
