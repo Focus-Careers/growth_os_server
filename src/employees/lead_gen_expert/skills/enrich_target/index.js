@@ -272,20 +272,26 @@ export async function executeSkill({
     }
   }
 
-  // Persist generic mailboxes as fallback channels
+  // Persist generic mailboxes (info@, sales@, hello@ etc.) as fallback contacts.
+  // Only saved when no named contacts exist, or to fill remaining slots.
+  // isDummyEmail already filters placeholder/fake addresses and bad domains.
   for (const channel of fallback_channels) {
     if (savedContacts.length >= MAX_CONTACTS_PER_COMPANY) break;
     if (!channel.email || isDummyEmail(channel.email)) continue;
     const { data: existing } = await admin.from('contacts')
       .select('id').eq('target_id', target_id).eq('email', channel.email).maybeSingle();
     if (!existing) {
-      await admin.from('contacts').insert({
+      const { data: inserted } = await admin.from('contacts').insert({
         target_id,
         account_id,
         email: channel.email,
         source: 'website_html',
         confidence_label: 'generic_mailbox',
-      });
+      }).select().single();
+      if (inserted) {
+        savedContacts.push(inserted);
+        console.log(`[enrich_target] Saved fallback: <${channel.email}>`);
+      }
     }
   }
 
