@@ -21,7 +21,7 @@
 import { generateQueryProfile } from '../../../../lib/lead_gen/query_generator.js';
 import { runSearchQueries } from '../../../../lib/lead_gen/search_runner.js';
 import { scrapeSite } from '../../../../lib/lead_gen/scraper.js';
-import { classifyLiveness, CLASSIFICATION } from '../../../../lib/lead_gen/liveness_classifier.js';
+import { classifyLiveness, classifyLivenessBatch, CLASSIFICATION } from '../../../../lib/lead_gen/liveness_classifier.js';
 import { extractDirectoryListings } from '../../../../lib/lead_gen/directory_fanout.js';
 import { matchToCompaniesHouse } from '../../../../lib/lead_gen/ch_matcher.js';
 import { scoreCandidate, TIER } from '../../../../lib/lead_gen/itp_scorer.js';
@@ -215,16 +215,18 @@ async function runSearchRound({ admin, itp, account, user_details_id, campaign_i
     MAX_SCRAPE_CONCURRENCY
   );
 
-  // ── Step 5: Classify ──────────────────────────────────────────────────
+  // ── Step 5: Classify (batched — 8 items per LLM call) ────────────────
   await progress(user_details_id, `Round ${round}: Analysing pages…`, pct(0.4));
-  const classified = await runParallel(
-    scraped,
-    ({ result, scraped: s }) =>
-      classifyLiveness({ url: result.url, scraped: s, directory_whitelist: directoryWhitelist })
-        .then(c => ({ result, scraped: s, classification: c })),
-    MAX_CLASSIFY_CONCURRENCY
+  const classificationResults = await classifyLivenessBatch(
+    scraped.map(({ result, scraped: s }) => ({ url: result.url, scraped: s })),
+    directoryWhitelist
   );
-  await increment(runId, { haiku_calls_used: classified.length });
+  const classified = scraped.map(({ result, scraped: s }, i) => ({
+    result,
+    scraped: s,
+    classification: classificationResults[i],
+  }));
+  await increment(runId, { haiku_calls_used: Math.ceil(scraped.length / 8) });
 
   // ── Step 6: Directory fanout ──────────────────────────────────────────
   await progress(user_details_id, `Round ${round}: Following directory listings…`, pct(0.5));

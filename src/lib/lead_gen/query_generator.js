@@ -86,7 +86,7 @@ export async function generateQueryProfile({ itp, account, force = false }) {
   };
 
   const response = await getOpenAI().chat.completions.create({
-    model: 'gpt-5',
+    model: 'gpt-5-mini',
     max_completion_tokens: 2048,
     messages: [
       { role: 'user', content: `${prompt}\n\n${JSON.stringify(context, null, 2)}` },

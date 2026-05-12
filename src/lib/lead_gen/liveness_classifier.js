@@ -24,6 +24,8 @@ export function shouldProceed(classification) {
   );
 }
 
+const LIVENESS_BATCH_SIZE = 8;
+
 /**
  * Classify a scraped page to determine whether it represents a real operating business.
  * Also extracts useful metadata (registration number, postcodes, phones, named people).
@@ -112,4 +114,92 @@ function blocked_result(reason) {
     reasoning: reason,
     extracted_metadata: { registration_number: null, postcodes: [], phones: [], named_people: [] },
   };
+}
+
+/**
+ * Classify a batch of scraped pages in groups of LIVENESS_BATCH_SIZE, each group
+ * sent as a single LLM call. Falls back to individual calls if batch parsing fails.
+ *
+ * @param {Array<{ url: string, scraped: object }>} items
+ * @param {string[]} [directory_whitelist]
+ * @returns {Promise<Array<{ classification, confidence, reasoning, extracted_metadata }>>}
+ *   Results in the same order as items.
+ */
+export async function classifyLivenessBatch(items, directory_whitelist = []) {
+  const results = [];
+  for (let i = 0; i < items.length; i += LIVENESS_BATCH_SIZE) {
+    const batch = items.slice(i, i + LIVENESS_BATCH_SIZE);
+    const batchResults = await _classifyBatch(batch, directory_whitelist);
+    results.push(...batchResults);
+  }
+  return results;
+}
+
+async function _classifyBatch(items, directory_whitelist) {
+  const prompt = await readFile(join(__dirname, 'prompts/prompt_liveness_classify_batch.md'), 'utf-8');
+
+  const whitelistStr = directory_whitelist.length > 0 ? directory_whitelist.join(', ') : 'none';
+
+  const itemsContent = items.map((item, idx) => {
+    if (!item.scraped || item.scraped.blocked || item.scraped.pages_scraped === 0) {
+      return `--- Item ${idx} ---\nURL: ${item.url}\nContent: [could not fetch page]\nEmails: none`;
+    }
+    let domain = '';
+    try { domain = new URL(item.url).hostname.replace(/^www\./, ''); } catch { /* ok */ }
+    const isWhitelisted = directory_whitelist.some(d => domain === d || domain.endsWith('.' + d));
+    return [
+      `--- Item ${idx} ---`,
+      `URL: ${item.url}`,
+      `Whitelisted: ${isWhitelisted}`,
+      'Content (first 1500 chars):',
+      item.scraped.all_text.slice(0, 1500),
+      `Emails: ${item.scraped.all_emails?.join(', ') || 'none'}`,
+    ].join('\n');
+  }).join('\n\n');
+
+  const filled = prompt
+    .replace('{{whitelist}}', whitelistStr)
+    .replace('{{items}}', itemsContent);
+
+  let response;
+  try {
+    response = await getOpenAI().chat.completions.create({
+      model: 'gpt-5-mini',
+      max_completion_tokens: Math.min(4096, items.length * 400),
+      messages: [{ role: 'user', content: filled }],
+    });
+  } catch (err) {
+    console.error('[liveness_classifier] Batch LLM error, falling back to individual calls:', err.message);
+    return Promise.all(items.map(item =>
+      classifyLiveness({ url: item.url, scraped: item.scraped, directory_whitelist })
+    ));
+  }
+
+  const raw = response.choices[0].message.content.trim()
+    .replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length !== items.length) {
+      throw new Error(`Expected array of ${items.length}, got ${Array.isArray(parsed) ? parsed.length : typeof parsed}`);
+    }
+  } catch (err) {
+    console.error(`[liveness_classifier] Batch parse error (${err.message}), falling back to individual calls`);
+    return Promise.all(items.map(item =>
+      classifyLiveness({ url: item.url, scraped: item.scraped, directory_whitelist })
+    ));
+  }
+
+  return parsed.map((r, idx) => ({
+    classification:     r.classification      ?? CLASSIFICATION.UNCLEAR,
+    confidence:         r.confidence          ?? 50,
+    reasoning:          r.reasoning           ?? '',
+    extracted_metadata: {
+      registration_number: r.extracted_metadata?.registration_number ?? null,
+      postcodes:           r.extracted_metadata?.postcodes           ?? [],
+      phones:              r.extracted_metadata?.phones              ?? [],
+      named_people:        r.extracted_metadata?.named_people        ?? [],
+    },
+  }));
 }
