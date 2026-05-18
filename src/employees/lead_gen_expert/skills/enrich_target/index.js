@@ -40,6 +40,15 @@ const DUMMY_EMAIL_LOCALS = new Set([
 ]);
 const VALID_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[a-z]{2,6}$/i;
 
+function isKeysmashLocal(local) {
+  if (!local || local.length < 4) return false;
+  const consonants = (local.match(/[bcdfghjklmnpqrstvwxyz]/gi) ?? []).length;
+  const vowels     = (local.match(/[aeiou]/gi) ?? []).length;
+  if (consonants > 0 && vowels === 0) return true;
+  if (consonants / (consonants + vowels) > 0.85) return true;
+  return false;
+}
+
 function isDummyEmail(email) {
   if (!email || !VALID_EMAIL_RE.test(email)) return true;
   // URL-encoded characters (e.g. %20 from mailto: links) indicate a malformed scraped email
@@ -48,6 +57,7 @@ function isDummyEmail(email) {
   if (!domain) return true;
   if (DUMMY_EMAIL_DOMAINS.has(domain)) return true;
   if (DUMMY_EMAIL_LOCALS.has(local)) return true;
+  if (isKeysmashLocal(local)) return true;
   return false;
 }
 
@@ -126,7 +136,7 @@ export async function executeSkill({
   if (!skipCompanyData) {
     try {
       apolloCompany = await enrichCompany(domain);
-      await increment(runId, { apollo_credits_used: 1 });
+      if (apolloCompany) await increment(runId, { apollo_credits_used: 1 });
     } catch (err) {
       console.warn(`[enrich_target] Apollo company error for ${domain}:`, err.message);
     }
@@ -182,7 +192,8 @@ export async function executeSkill({
     .from('contacts')
     .select('id, first_name, last_name, email, role')
     .eq('target_id', target_id)
-    .eq('source', 'companies_house');
+    .eq('source', 'companies_house')
+    .eq('account_id', account_id);
 
   // ── Step 6: Reconcile all sources ─────────────────────────────────────
   const { contacts: rankedContacts, fallback_channels } = reconcileContacts({

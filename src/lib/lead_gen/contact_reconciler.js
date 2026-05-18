@@ -196,13 +196,14 @@ export function reconcileContacts({
   // Sort descending by ranking_score
   scored.sort((a, b) => b.ranking_score - a.ranking_score);
 
-  // Deduplicate fallback channels
+  // Deduplicate fallback channels (normalise to lowercase to catch mixed-case dupes)
   const uniqueChannels = [];
   const seenEmails = new Set();
   for (const ch of fallback_channels) {
-    if (!seenEmails.has(ch.email)) {
-      seenEmails.add(ch.email);
-      uniqueChannels.push(ch);
+    const normEmail = ch.email?.toLowerCase() ?? null;
+    if (normEmail && !seenEmails.has(normEmail)) {
+      seenEmails.add(normEmail);
+      uniqueChannels.push({ ...ch, email: normEmail });
     }
   }
 

@@ -31,6 +31,14 @@ Domain appears parked, the business has closed, the website is under constructio
 **`unclear`**
 Cannot determine from the available content. Drop with logging.
 
+# Geographic scope
+
+This pipeline targets UK-based businesses only. If the content clearly indicates the business is based **outside the UK** (e.g. US/Australian/European address, non-UK phone format, currency other than £), classify it as `unclear` and do not proceed further.
+
+If UK location is ambiguous or unknown, proceed with the normal classification — only drop if clearly non-UK.
+
+UK indicators: postcodes matching UK format (e.g. SW1A 1AA), phone numbers starting 01/02/03/07/08, "Ltd"/"Limited"/"PLC", UK cities/counties.
+
 # What to extract
 
 Alongside the classification, extract any useful metadata found on the page:
@@ -38,6 +46,7 @@ Alongside the classification, extract any useful metadata found on the page:
 - **`registration_number`**: Any UK company registration number visible (8 digits, often near "Company No.", "Reg No.", "Company Registration" or in the footer). Return as a string, e.g. "12345678". Null if not found.
 - **`postcodes`**: Any UK postcodes visible on the page (pattern: letters+digits+space+digit+2letters, e.g. "SW1A 1AA"). Return as array of strings.
 - **`phones`**: Any UK phone numbers visible (starting 01, 02, 03, 07, 08). Return as array of strings, cleaned of spaces/dashes.
+- **`city`**: The town or city where this business is based, if clearly stated. Return as a string (e.g. "Leeds"), or null if not found.
 - **`named_people`**: Any named individuals with clear roles mentioned (e.g. "John Smith, Managing Director"). Return as array of `{name, role}` objects. Only include people who clearly work at this company — ignore testimonial authors, news mentions.
 
 # Response format
@@ -53,6 +62,7 @@ Example:
     "registration_number": "08234567",
     "postcodes": ["LS1 4AP"],
     "phones": ["01132001234"],
+    "city": "Leeds",
     "named_people": [
       { "name": "Dave Thornton", "role": "Managing Director" }
     ]

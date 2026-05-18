@@ -93,6 +93,15 @@ export async function matchToCompaniesHouse({
     if (!profile) continue;
 
     const regAddr = profile.registered_office_address ?? {};
+
+    // Skip non-UK companies (CH can return overseas registrations)
+    const UK_COUNTRIES = new Set(['england', 'scotland', 'wales', 'northern ireland', 'united kingdom', 'uk', 'gb', 'great britain']);
+    const chCountry = (regAddr.country ?? '').toLowerCase().trim();
+    if (chCountry && !UK_COUNTRIES.has(chCountry)) {
+      console.log(`[ch_matcher] Skipping non-UK company: ${profile.company_name} (country: ${regAddr.country})`);
+      continue;
+    }
+
     const chPostcode = (regAddr.postal_code ?? '').trim().toUpperCase();
     const chPhone = (profile.accounts?.accounting_reference_date?.day ?? '').trim(); // CH doesn't expose phone directly
     const chTown = (regAddr.locality ?? regAddr.region ?? '').toLowerCase().trim();

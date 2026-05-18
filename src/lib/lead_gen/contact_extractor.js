@@ -5,6 +5,14 @@ import { getOpenAI } from '../../config/openai.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const _promptCache = new Map();
+async function loadPrompt(filename) {
+  if (!_promptCache.has(filename)) {
+    _promptCache.set(filename, await readFile(join(__dirname, filename), 'utf-8'));
+  }
+  return _promptCache.get(filename);
+}
+
 export const CONFIDENCE = {
   VERIFIED_NAMED: 'verified_named',
   NAMED_NO_EMAIL: 'named_no_email',
@@ -40,7 +48,7 @@ export async function extractContactHypotheses({ scraped, domain, company_name }
     return [];
   }
 
-  const prompt = await readFile(join(__dirname, 'prompts/prompt_contact_extract.md'), 'utf-8');
+  const prompt = await loadPrompt('prompts/prompt_contact_extract.md');
 
   const content = [
     `Domain: ${domain}`,

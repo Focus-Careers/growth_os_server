@@ -5,6 +5,14 @@ import { getOpenAI } from '../../config/openai.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const _promptCache = new Map();
+async function loadPrompt(filename) {
+  if (!_promptCache.has(filename)) {
+    _promptCache.set(filename, await readFile(join(__dirname, filename), 'utf-8'));
+  }
+  return _promptCache.get(filename);
+}
+
 export const TIER = {
   A: 'A',    // ≥ 85
   B: 'B',    // 70–84
@@ -39,7 +47,7 @@ export function scoreToTier(score) {
  * @returns {Promise<{score: number, tier: string, reasoning: string, signals_for: string[], signals_against: string[]}>}
  */
 export async function scoreCandidate({ itp, account, evidence, confirmed_positives = [] }) {
-  const prompt = await readFile(join(__dirname, 'prompts/prompt_itp_score.md'), 'utf-8');
+  const prompt = await loadPrompt('prompts/prompt_itp_score.md');
 
   // Build the candidate block
   const candidateLines = [
@@ -139,7 +147,7 @@ export async function scoreCandidate({ itp, account, evidence, confirmed_positiv
 export async function scoreCandidatesBatch({ itp, account, candidates, confirmed_positives = [] }) {
   if (!candidates.length) return [];
 
-  const prompt = await readFile(join(__dirname, 'prompts/prompt_itp_score_batch.md'), 'utf-8');
+  const prompt = await loadPrompt('prompts/prompt_itp_score_batch.md');
 
   const candidateBlock = candidates.map((c, i) => {
     const lines = [

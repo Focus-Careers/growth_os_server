@@ -5,6 +5,14 @@ import { getOpenAI } from '../../config/openai.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const _promptCache = new Map();
+async function loadPrompt(filename) {
+  if (!_promptCache.has(filename)) {
+    _promptCache.set(filename, await readFile(join(__dirname, filename), 'utf-8'));
+  }
+  return _promptCache.get(filename);
+}
+
 /**
  * Extract individual business listings from a whitelisted directory page.
  *
@@ -27,7 +35,7 @@ export async function extractDirectoryListings({ url, scraped, directory_identif
     return [];
   }
 
-  const prompt = await readFile(join(__dirname, 'prompts/prompt_directory_fanout.md'), 'utf-8');
+  const prompt = await loadPrompt('prompts/prompt_directory_fanout.md');
 
   const content = [
     `Directory: ${directory_identifier}`,

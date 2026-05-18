@@ -5,6 +5,14 @@ import { getOpenAI } from '../../config/openai.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const _promptCache = new Map();
+async function loadPrompt(filename) {
+  if (!_promptCache.has(filename)) {
+    _promptCache.set(filename, await readFile(join(__dirname, filename), 'utf-8'));
+  }
+  return _promptCache.get(filename);
+}
+
 /** All valid classification values */
 export const CLASSIFICATION = {
   REAL_OPERATING_BUSINESS: 'real_operating_business',
@@ -60,7 +68,7 @@ export async function classifyLiveness({ url, scraped, directory_whitelist = [] 
     d => domain === d || domain.endsWith('.' + d)
   );
 
-  const prompt = await readFile(join(__dirname, 'prompts/prompt_liveness_classify.md'), 'utf-8');
+  const prompt = await loadPrompt('prompts/prompt_liveness_classify.md');
 
   const content = [
     `URL: ${url}`,
@@ -98,6 +106,7 @@ export async function classifyLiveness({ url, scraped, directory_whitelist = [] 
         registration_number: parsed.extracted_metadata?.registration_number ?? null,
         postcodes: parsed.extracted_metadata?.postcodes ?? [],
         phones: parsed.extracted_metadata?.phones ?? [],
+        city: parsed.extracted_metadata?.city ?? null,
         named_people: parsed.extracted_metadata?.named_people ?? [],
       },
     };
@@ -112,7 +121,7 @@ function blocked_result(reason) {
     classification: CLASSIFICATION.UNCLEAR,
     confidence: 0,
     reasoning: reason,
-    extracted_metadata: { registration_number: null, postcodes: [], phones: [], named_people: [] },
+    extracted_metadata: { registration_number: null, postcodes: [], phones: [], city: null, named_people: [] },
   };
 }
 
@@ -136,7 +145,7 @@ export async function classifyLivenessBatch(items, directory_whitelist = []) {
 }
 
 async function _classifyBatch(items, directory_whitelist) {
-  const prompt = await readFile(join(__dirname, 'prompts/prompt_liveness_classify_batch.md'), 'utf-8');
+  const prompt = await loadPrompt('prompts/prompt_liveness_classify_batch.md');
 
   const whitelistStr = directory_whitelist.length > 0 ? directory_whitelist.join(', ') : 'none';
 
@@ -199,6 +208,7 @@ async function _classifyBatch(items, directory_whitelist) {
       registration_number: r.extracted_metadata?.registration_number ?? null,
       postcodes:           r.extracted_metadata?.postcodes           ?? [],
       phones:              r.extracted_metadata?.phones              ?? [],
+      city:                r.extracted_metadata?.city                ?? null,
       named_people:        r.extracted_metadata?.named_people        ?? [],
     },
   }));

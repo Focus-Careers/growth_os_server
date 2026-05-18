@@ -12,11 +12,16 @@ Whitelisted directories for this ITP: {{whitelist}}
 - **parked_or_dead** — Parked domain, closed business, under construction, or mostly empty. Drop.
 - **unclear** — Cannot determine from available content. Drop.
 
+# Geographic scope
+
+This pipeline targets UK-based businesses only. If content clearly shows a business based outside the UK, classify it as `unclear`. If UK location is ambiguous, proceed normally — only drop if clearly non-UK.
+
 # What to extract (for real_operating_business and whitelisted_directory only)
 
 - **registration_number**: UK company reg number (8 digits, near "Company No." / "Reg No." etc), or null
 - **postcodes**: UK postcodes visible on page (e.g. "SW1A 1AA"), as array of strings
 - **phones**: UK phone numbers (starting 01, 02, 03, 07, 08), as array of strings
+- **city**: Town or city where the business is based (e.g. "Leeds"), or null
 - **named_people**: Named individuals with clear roles at this company (e.g. "John Smith, MD"), as array of {name, role}. Exclude testimonial authors.
 
 # Response format
@@ -29,7 +34,7 @@ Return ONLY a JSON array with one object per item, in the same order as the inpu
     "classification": "real_operating_business",
     "confidence": 85,
     "reasoning": "Commercial plumbing contractor with team page and contact details.",
-    "extracted_metadata": { "registration_number": null, "postcodes": ["LS1 4AP"], "phones": ["01132001234"], "named_people": [{ "name": "Dave Thornton", "role": "MD" }] }
+    "extracted_metadata": { "registration_number": null, "postcodes": ["LS1 4AP"], "phones": ["01132001234"], "city": "Leeds", "named_people": [{ "name": "Dave Thornton", "role": "MD" }] }
   }
 ]
 

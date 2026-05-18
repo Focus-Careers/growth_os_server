@@ -91,9 +91,9 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id = null
     await progress(user_details_id, 'Checking existing targets against ITP…', 8);
     const internalLeads = await scoreInternalTargets({ admin, itp, account, runId, seenDomains });
     console.log(`[100_leads] Internal scoring: ${internalLeads.length} existing targets qualified`);
+    let internalApprovedCount = await countApprovedLeads(admin, itp.id);
     for (const { target, score, tier, reasoning } of internalLeads) {
-      const currentCount = await countApprovedLeads(admin, itp.id);
-      if (currentCount >= targetCount) break;
+      if (internalApprovedCount >= targetCount) break;
 
       const { data: lead, error: leadErr } = await admin.from('leads').insert({
         target_id:        target.id,
@@ -107,6 +107,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id = null
         console.error(`[100_leads] Internal lead insert error for ${target.domain}:`, leadErr.message);
         continue;
       }
+      internalApprovedCount++;
       if (target.domain) seenDomains.add(target.domain);
       console.log(`[100_leads] Internal lead: ${target.title ?? target.domain} (score: ${score}, tier: ${tier})`);
 
@@ -312,6 +313,7 @@ async function runSearchRound({ admin, itp, account, user_details_id, campaign_i
         postcode:            metadata.postcodes?.[0] ?? candidate.directory_listing?.location ?? null,
         registration_number: metadata.registration_number ?? null,
         phone:               metadata.phones?.[0] ?? null,
+        city:                metadata.city ?? null,
       }).catch(() => ({ matched: false }));
       return { ...candidate, ch };
     },
@@ -351,14 +353,15 @@ async function runSearchRound({ admin, itp, account, user_details_id, campaign_i
   // ── Step 11: Persist + enrich + sync to campaign ──────────────────────
   await progress(user_details_id, `Round ${round}: Enriching ${qualified.length} qualified leads…`, pct(0.8));
   let enrichedCount = 0;
+  let roundApprovedCount = await countApprovedLeads(admin, itp.id);
 
   for (const candidate of qualified) {
-    const currentCount = await countApprovedLeads(admin, itp.id);
-    if (currentCount >= targetCount) break;
+    if (roundApprovedCount >= targetCount) break;
 
     const saved = await persistCandidate(admin, candidate, itp, account.id);
     if (!saved) continue;
 
+    roundApprovedCount++;
     if (candidate.domain) seenDomains.add(candidate.domain);
 
     try {
@@ -426,13 +429,15 @@ async function enrichConfirmedPositives({ admin, itp, user_details_id, campaign_
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function progress(user_details_id, message, percent) {
-  await broadcastSkillStatus(user_details_id, {
-    employee: 'lead_gen_expert',
-    skill:    'target_finder_100_leads',
-    status:   'running',
-    message:  `${message} ${percent}%`,
-    persist:  false,
-  });
+  try {
+    await broadcastSkillStatus(user_details_id, {
+      employee: 'lead_gen_expert',
+      skill:    'target_finder_100_leads',
+      status:   'running',
+      message:  `${message} ${percent}%`,
+      persist:  false,
+    });
+  } catch { /* non-fatal — never let a UI update kill the run */ }
 }
 
 /**
@@ -452,9 +457,10 @@ async function runParallel(items, fn, concurrency) {
  * Count all approved leads for this ITP.
  */
 async function countApprovedLeads(admin, itpId) {
-  const { data } = await admin
-    .from('leads').select('id').eq('itp_id', itpId).eq('approved', true);
-  return data?.length ?? 0;
+  const { count } = await admin
+    .from('leads').select('id', { count: 'exact', head: true })
+    .eq('itp_id', itpId).eq('approved', true);
+  return count ?? 0;
 }
 
 /**
@@ -689,7 +695,15 @@ async function persistCandidate(admin, candidate, itp, accountId) {
   const officers = candidate.ch?.officers ?? [];
   for (const officer of officers) {
     if (!officer.first_name && !officer.last_name) continue;
-    try {
+    const { data: existing } = await admin.from('contacts')
+      .select('id')
+      .eq('target_id', target.id)
+      .eq('account_id', accountId)
+      .eq('source', 'companies_house')
+      .eq('first_name', officer.first_name ?? '')
+      .eq('last_name', officer.last_name ?? '')
+      .maybeSingle();
+    if (!existing) {
       await admin.from('contacts').insert({
         target_id:  target.id,
         account_id: accountId,
@@ -699,7 +713,15 @@ async function persistCandidate(admin, candidate, itp, accountId) {
         email:      null,
         source:     'companies_house',
       });
-    } catch { /* ignore duplicate errors */ }
+    }
+  }
+
+  // Guard against double-insert if target was already linked to this ITP
+  const { data: existingLead } = await admin.from('leads')
+    .select('id').eq('target_id', target.id).eq('itp_id', itp.id).maybeSingle();
+  if (existingLead) {
+    console.log(`[100_leads] Lead already exists for ${domain} (itp ${itp.id}) — skipping insert`);
+    return { target_id: target.id, lead_id: existingLead.id };
   }
 
   const { data: lead, error: leadErr } = await admin
@@ -758,14 +780,11 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
 
   if (!filteredContacts.length) return;
 
-  for (const contact of filteredContacts) {
-    const { error } = await admin
-      .from('campaign_contacts')
-      .insert({ campaign_id, contact_id: contact.id })
-      .select('id').single();
-    if (error && !error.message?.includes('duplicate')) {
-      console.error('[100_leads] campaign_contacts insert error:', error.message);
-    }
+  const { error: ccError } = await admin
+    .from('campaign_contacts')
+    .insert(filteredContacts.map(c => ({ campaign_id, contact_id: c.id })));
+  if (ccError && !ccError.message?.includes('duplicate')) {
+    console.error('[100_leads] campaign_contacts batch insert error:', ccError.message);
   }
   console.log(`[100_leads] Added ${filteredContacts.length} contacts to campaign ${campaign_id}`);
 
@@ -800,15 +819,11 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
 
         await addLeads(slCampaignId, slLeads);
 
-        // Mark campaign_contacts rows as synced
-        for (const contact of filteredContacts) {
-          const { data: cc } = await admin
-            .from('campaign_contacts').select('id')
-            .eq('campaign_id', campaign_id).eq('contact_id', contact.id).maybeSingle();
-          if (cc) {
-            await admin.from('campaign_contacts').update({ smartlead_synced: true }).eq('id', cc.id);
-          }
-        }
+        // Mark campaign_contacts rows as synced (single batch update)
+        await admin.from('campaign_contacts')
+          .update({ smartlead_synced: true })
+          .eq('campaign_id', campaign_id)
+          .in('contact_id', filteredContacts.map(c => c.id));
 
         console.log(`[100_leads] Pushed ${slLeads.length} contacts to Smartlead`);
       }

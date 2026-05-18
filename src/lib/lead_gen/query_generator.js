@@ -6,6 +6,14 @@ import { getSupabaseAdmin } from '../../config/supabase.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const _promptCache = new Map();
+async function loadPrompt(filename) {
+  if (!_promptCache.has(filename)) {
+    _promptCache.set(filename, await readFile(join(__dirname, filename), 'utf-8'));
+  }
+  return _promptCache.get(filename);
+}
+
 /**
  * Generate a search profile for an ITP.
  *
@@ -56,7 +64,7 @@ export async function generateQueryProfile({ itp, account, force = false }) {
     console.log(`[query_generator] Generating full search profile for ITP ${itp.id}${force ? ' (forced)' : ''}`);
   }
 
-  const prompt = await readFile(join(__dirname, 'prompts/prompt_query_generate.md'), 'utf-8');
+  const prompt = await loadPrompt('prompts/prompt_query_generate.md');
 
   const context = {
     account: {
