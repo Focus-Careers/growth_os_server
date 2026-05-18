@@ -31,15 +31,19 @@ const DUMMY_EMAIL_DOMAINS = new Set([
   'example.com', 'example.org', 'example.net', 'test.com', 'testing.com',
   'sample.com', 'email.com', 'mailinator.com', 'guerrillamail.com', 'tempmail.com',
   'yopmail.com', 'fakeinbox.com', 'maildrop.cc', 'placeholder.com', 'dummy.com',
+  // Website builder / theme filler addresses seen in the wild
+  'godaddy.com', 'company.com', 'oceanthemes.net',
 ]);
 const DUMMY_EMAIL_LOCALS = new Set([
-  'sample', 'test', 'placeholder', 'dummy', 'fake', 'noreply', 'no-reply',
+  'sample', 'test', 'placeholder', 'dummy', 'fake', 'filler', 'noreply', 'no-reply',
   'donotreply', 'do-not-reply', 'example', 'user', 'email', 'mail', 'none',
 ]);
 const VALID_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[a-z]{2,6}$/i;
 
 function isDummyEmail(email) {
   if (!email || !VALID_EMAIL_RE.test(email)) return true;
+  // URL-encoded characters (e.g. %20 from mailto: links) indicate a malformed scraped email
+  if (email.includes('%')) return true;
   const [local, domain] = email.toLowerCase().split('@');
   if (!domain) return true;
   if (DUMMY_EMAIL_DOMAINS.has(domain)) return true;
