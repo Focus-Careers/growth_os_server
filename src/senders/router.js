@@ -30,6 +30,7 @@ router.post('/:senderId/verify', async (req, res) => {
       user: sender.smtp_username ?? sender.email,
       pass: sender.smtp_password,
     },
+    family: 4,              // force IPv4 — Railway has no outbound IPv6
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,
     socketTimeout:    10_000,
