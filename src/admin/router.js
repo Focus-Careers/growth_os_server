@@ -380,6 +380,41 @@ router.post('/target-finder/run', async (req, res) => {
   }
 });
 
+// POST /api/admin/runs/:id/cancel
+router.post('/runs/:id/cancel', async (req, res) => {
+  const supabase = await requireSuperAdmin(req, res);
+  if (!supabase) return;
+
+  const { id } = req.params;
+
+  // Fetch the run to get the account_id
+  const { data: run, error: runErr } = await supabase
+    .from('lead_generation_runs')
+    .select('id, status, account_id')
+    .eq('id', id)
+    .single();
+
+  if (runErr || !run) return res.status(404).json({ error: 'Run not found' });
+  if (run.status !== 'running') return res.status(400).json({ error: `Run is not running (status: ${run.status})` });
+
+  // Mark run as cancelled
+  await supabase
+    .from('lead_generation_runs')
+    .update({ status: 'cancelled', completed_at: new Date().toISOString() })
+    .eq('id', id);
+
+  // Clear mobilisation queues for all users on this account
+  if (run.account_id) {
+    await supabase
+      .from('user_details')
+      .update({ active_mobilisation: null, queued_mobilisations: [] })
+      .eq('account_id', run.account_id);
+  }
+
+  console.log(`[admin/cancel] Run ${id} cancelled, mobilisation queues cleared for account ${run.account_id}`);
+  res.json({ cancelled: true });
+});
+
 // GET /api/admin/crons
 router.get('/crons', async (req, res) => {
   const user_details_id = req.query.user_details_id;
