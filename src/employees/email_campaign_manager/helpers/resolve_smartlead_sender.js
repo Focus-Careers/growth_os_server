@@ -50,6 +50,12 @@ export async function resolveSmartleadSender(senderId) {
       });
       if (newAccount?.id) {
         slEmailAccountId = String(newAccount.id);
+      } else {
+        console.warn(`[resolveSmartleadSender] Smartlead rejected email account for ${sender.email}`);
+        await admin.from('senders').update({
+          verified: false,
+          verification_error: 'Smartlead rejected the email account — check your SMTP credentials',
+        }).eq('id', sender.id);
       }
     } else {
       console.warn('[resolveSmartleadSender] Sender has no SMTP details, skipping email account setup');

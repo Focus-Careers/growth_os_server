@@ -150,6 +150,27 @@ export async function createEmailAccount({ from_name, from_email, smtp_host, smt
 }
 
 /**
+ * Update an existing email account in Smartlead.
+ */
+export async function updateEmailAccount(emailAccountId, { from_name, smtp_password, smtp_host, smtp_port, imap_host, imap_port } = {}) {
+  console.log(`[smartlead] Updating email account: ${emailAccountId}`);
+  const body = {};
+  if (from_name    !== undefined) body.from_name  = from_name;
+  if (smtp_password !== undefined) body.password  = smtp_password;
+  if (smtp_host    !== undefined) body.smtp_host  = smtp_host;
+  if (smtp_port    !== undefined) body.smtp_port  = smtp_port;
+  if (imap_host    !== undefined) body.imap_host  = imap_host;
+  if (imap_port    !== undefined) body.imap_port  = imap_port;
+  const { ok, data } = await smartleadFetch(`/email-accounts/${emailAccountId}`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!ok) return null;
+  console.log(`[smartlead] Email account updated:`, JSON.stringify(data));
+  return data;
+}
+
+/**
  * Attach an email account to a campaign.
  */
 export async function attachEmailAccount(campaignId, emailAccountId) {
