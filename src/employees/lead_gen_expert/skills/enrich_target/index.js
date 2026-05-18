@@ -36,7 +36,11 @@ const DUMMY_EMAIL_DOMAINS = new Set([
 ]);
 const DUMMY_EMAIL_LOCALS = new Set([
   'sample', 'test', 'placeholder', 'dummy', 'fake', 'filler', 'noreply', 'no-reply',
-  'donotreply', 'do-not-reply', 'example', 'user', 'email', 'mail', 'none',
+  'donotreply', 'do-not-reply', 'example', 'user', 'email', 'mail', 'none', 'null',
+]);
+// Common TLDs used to detect concatenated-TLD domain artefacts (e.g. co.ukco.uk)
+const COMMON_TLDS = new Set([
+  'uk', 'com', 'net', 'org', 'co', 'io', 'ie', 'au', 'ca', 'de', 'fr', 'us', 'biz', 'info', 'gov', 'edu',
 ]);
 const VALID_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[a-z]{2,6}$/i;
 
@@ -58,6 +62,17 @@ function isDummyEmail(email) {
   if (DUMMY_EMAIL_DOMAINS.has(domain)) return true;
   if (DUMMY_EMAIL_LOCALS.has(local)) return true;
   if (isKeysmashLocal(local)) return true;
+  // Reject JS rendering artefacts where 'null' gets prepended to an email local
+  // e.g. nullduncan@domain.com → JS rendered null + variable name
+  if (local.startsWith('null') && local.length > 4) return true;
+  // Reject domains with concatenated TLD segments — scraping artefact from doubled suffixes
+  // e.g. info@domain.co.ukco.uk where .co.uk got appended twice
+  const domainParts = domain.split('.');
+  for (const part of domainParts.slice(1)) {
+    for (let i = 2; i <= Math.min(part.length - 2, 4); i++) {
+      if (COMMON_TLDS.has(part.slice(0, i)) && COMMON_TLDS.has(part.slice(i))) return true;
+    }
+  }
   return false;
 }
 

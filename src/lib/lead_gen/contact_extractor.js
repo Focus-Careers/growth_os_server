@@ -13,6 +13,11 @@ async function loadPrompt(filename) {
   return _promptCache.get(filename);
 }
 
+// Common TLDs used to detect concatenated-TLD domain artefacts (e.g. co.ukco.uk)
+const COMMON_TLDS = new Set([
+  'uk', 'com', 'net', 'org', 'co', 'io', 'ie', 'au', 'ca', 'de', 'fr', 'us', 'biz', 'info', 'gov', 'edu',
+]);
+
 export const CONFIDENCE = {
   VERIFIED_NAMED: 'verified_named',
   NAMED_NO_EMAIL: 'named_no_email',
@@ -108,6 +113,14 @@ function normaliseEmail(email) {
   if (!trimmed.includes('@') || trimmed.includes(' ')) return null;
   const [, domain] = trimmed.split('@');
   if (!domain || !domain.includes('.')) return null;
+  // Reject domains with concatenated TLD segments — scraping artefact from doubled suffixes
+  // e.g. info@domain.co.ukco.uk where .co.uk got appended twice
+  const domainParts = domain.split('.');
+  for (const part of domainParts.slice(1)) {
+    for (let i = 2; i <= Math.min(part.length - 2, 4); i++) {
+      if (COMMON_TLDS.has(part.slice(0, i)) && COMMON_TLDS.has(part.slice(i))) return null;
+    }
+  }
   return trimmed;
 }
 
