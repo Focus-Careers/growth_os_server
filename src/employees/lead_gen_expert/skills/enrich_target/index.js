@@ -169,6 +169,25 @@ export async function executeSkill({
     itp_context: itp,
   });
 
+  // ── Step 6b: Safety net — recover scraped emails missed by the LLM ────
+  // The LLM often extracts named contacts without emails, leaving generic
+  // mailboxes (info@, contact@, etc.) sitting unused in scraped.all_emails.
+  // This ensures those emails reach the fallback save path.
+  {
+    const capturedEmails = new Set([
+      ...rankedContacts.map(c => c.email).filter(Boolean).map(e => e.toLowerCase()),
+      ...fallback_channels.map(c => c.email?.toLowerCase()).filter(Boolean),
+    ]);
+    for (const email of scraped.all_emails ?? []) {
+      const norm = email.toLowerCase().trim();
+      if (!norm || capturedEmails.has(norm)) continue;
+      if (isDummyEmail(norm)) continue;
+      fallback_channels.push({ email: norm, source_page: 'scraped_safety_net' });
+      capturedEmails.add(norm);
+      console.log(`[enrich_target] Safety net: <${norm}> not captured by LLM, adding as fallback`);
+    }
+  }
+
   // ── Step 7: Apollo reveal for top contacts without emails ─────────────
   let revealsUsed = 0;
   for (const contact of rankedContacts) {
