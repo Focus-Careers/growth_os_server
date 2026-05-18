@@ -10,6 +10,7 @@ import campaignsRouter from './campaigns/router.js';
 import userRouter from './user/router.js';
 import itpRouter from './itp/router.js';
 import adminRouter from './admin/router.js';
+import sendersRouter from './senders/router.js';
 import { init as initCronService } from './admin/cronService.js';
 
 dotenv.config();
@@ -43,6 +44,7 @@ app.use('/api/campaigns', campaignsRouter);
 app.use('/api/user', userRouter);
 app.use('/api/itp', itpRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/senders', sendersRouter);
 
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
