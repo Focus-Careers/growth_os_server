@@ -72,21 +72,22 @@ router.post('/:senderId/verify', async (req, res) => {
 // Updates SMTP/IMAP credentials on an existing sender row (used by the retry flow).
 router.put('/:senderId/credentials', async (req, res) => {
   const { senderId } = req.params;
-  const { smtp_host, smtp_port, smtp_password, imap_host, imap_port } = req.body;
+  const { email, display_name, smtp_host, smtp_port, smtp_password, imap_host, imap_port } = req.body;
   const admin = getSupabaseAdmin();
 
-  const { error } = await admin
-    .from('senders')
-    .update({
-      smtp_host:     smtp_host     ?? undefined,
-      smtp_port:     smtp_port     ?? undefined,
-      smtp_password: smtp_password ?? undefined,
-      imap_host:     imap_host     ?? undefined,
-      imap_port:     imap_port     ?? undefined,
-      verified:      false,
-      verification_error: null,
-    })
-    .eq('id', senderId);
+  const updates = {
+    verified: false,
+    verification_error: null,
+    ...(email         != null && { email: email.trim().toLowerCase(), smtp_username: email.trim().toLowerCase() }),
+    ...(display_name  != null && { display_name }),
+    ...(smtp_host     != null && { smtp_host }),
+    ...(smtp_port     != null && { smtp_port }),
+    ...(smtp_password != null && { smtp_password }),
+    ...(imap_host     != null && { imap_host }),
+    ...(imap_port     != null && { imap_port }),
+  };
+
+  const { error } = await admin.from('senders').update(updates).eq('id', senderId);
 
   if (error) return res.status(500).json({ error: error.message });
   return res.json({ ok: true });
