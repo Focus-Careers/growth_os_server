@@ -1,5 +1,6 @@
 import express from 'express';
 import nodemailer from 'nodemailer';
+import dns from 'dns/promises';
 import { getSupabaseAdmin } from '../config/supabase.js';
 
 const router = express.Router();
@@ -22,15 +23,25 @@ router.post('/:senderId/verify', async (req, res) => {
     return res.status(400).json({ error: 'Sender is missing SMTP credentials' });
   }
 
+  // Resolve to an explicit IPv4 address — Railway has no outbound IPv6,
+  // so letting nodemailer pick an AAAA record causes ENETUNREACH.
+  let smtpHost = sender.smtp_host;
+  try {
+    const [ipv4] = await dns.resolve4(sender.smtp_host);
+    smtpHost = ipv4;
+  } catch {
+    // If resolve4 fails (e.g. custom host with no A record), fall back to
+    // the original hostname and let nodemailer handle it.
+  }
+
   const transport = nodemailer.createTransport({
-    host: sender.smtp_host,
+    host: smtpHost,
     port: sender.smtp_port ?? 587,
     secure: (sender.smtp_port ?? 587) === 465,
     auth: {
       user: sender.smtp_username ?? sender.email,
       pass: sender.smtp_password,
     },
-    family: 4,              // force IPv4 — Railway has no outbound IPv6
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,
     socketTimeout:    10_000,
