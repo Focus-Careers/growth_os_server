@@ -39,6 +39,12 @@ const BLOCKED_DOMAINS = new Set([
   'companydatashop.com', 'checkcompany.co.uk', 'bizstats.co.uk',
   'f6s.com', 'b2bhint.com', 'uktradeinfo.com', 'adsgroup.org.uk',
   'crunchbase.com', 'legalentityidentifier.co.uk',
+  // Round 5 — trades aggregators and quote platforms
+  'ratedpeople.com', 'rated-people.com', 'bidvine.com', 'habitissimo.co.uk',
+  'craftjack.co.uk', 'workatrader.co.uk', 'tradesmenlive.co.uk',
+  'local.com', 'brownbook.net', 'ufindus.com', 'businessmagnet.co.uk',
+  'wampit.co.uk', 'listabusiness.co.uk', 'fyple.co.uk', 'hotfrog.co.uk',
+  'n49.co.uk', 'tipped.co.uk', 'uk.enrollbusiness.com', 'cybo.com',
 ]);
 
 // Suffix matches — blocks any subdomain (e.g. open.endole.co.uk, gb.kompass.com)

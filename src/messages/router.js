@@ -11,7 +11,6 @@ import { generateDraperSummary } from '../intelligence/draper_summary/index.js';
 import { generateBelfortSummary } from '../intelligence/belfort_summary/index.js';
 import { generateWarrenSummary } from '../intelligence/warren_summary/index.js';
 import { generatePepperSummary } from '../intelligence/pepper_summary/index.js';
-import { generateSicCodesWithDescriptions } from '../employees/lead_gen_expert/skills/target_finder_ten_leads/sic_code_mapper.js';
 import { getSupabaseAdmin } from '../config/supabase.js';
 
 const router = Router();
@@ -96,25 +95,6 @@ router.post('/pepper-summary', async (req, res) => {
     return res.json({ message });
   } catch (err) {
     console.error('[pepper-summary] error:', err);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// POST /api/messages/generate-sic-codes
-router.post('/generate-sic-codes', async (req, res) => {
-  try {
-    const { itp_id } = req.body;
-    if (!itp_id) return res.status(400).json({ error: 'itp_id required' });
-
-    const { data: itp } = await getSupabaseAdmin()
-      .from('itp').select('*').eq('id', itp_id).single();
-
-    if (!itp) return res.status(404).json({ error: 'ITP not found' });
-
-    const sic_codes = await generateSicCodesWithDescriptions(itp);
-    return res.json({ sic_codes });
-  } catch (err) {
-    console.error('[generate-sic-codes] error:', err);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });

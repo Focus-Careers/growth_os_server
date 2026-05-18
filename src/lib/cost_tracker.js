@@ -3,7 +3,7 @@ import { getSupabaseAdmin } from '../config/supabase.js';
 // USD cost per API call
 const COST_PER_CALL_USD = {
   serper: 0.0012,    // $60 / 50,000 credits
-  haiku:  0.0100,    // ~$0.01 per scoring batch (rough estimate)
+  haiku:  0.0020,    // gpt-5-mini: ~$0.25/1M input + $2.00/1M output; ~2000 in + 512 out ≈ $0.0016 per call
   apollo: 0.024750,  // $99 / 4,000 credits
 };
 
