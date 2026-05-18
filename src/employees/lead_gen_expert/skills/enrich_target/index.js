@@ -58,6 +58,7 @@ function isDummyEmail(email) {
  * @param {boolean} [params.silent=true]            - Skip processSkillOutput if true
  * @param {string}  [params.runId]                  - cost_tracker run id (optional)
  * @param {number}  [params.apollo_reveals_cap]     - Max reveal credits per target (default 3)
+ * @param {string}  [params.account_id]             - Explicit account scope for contacts
  *
  * @returns {Promise<{
  *   target_id: string,
@@ -72,6 +73,7 @@ export async function executeSkill({
   silent = true,
   runId = null,
   apollo_reveals_cap = DEFAULT_REVEAL_CAP,
+  account_id = null,
 }) {
   const admin = getSupabaseAdmin();
 
@@ -81,8 +83,20 @@ export async function executeSkill({
   if (!target) throw new Error(`enrich_target: target not found: ${target_id}`);
 
   if (target.enriched_at) {
-    console.log(`[enrich_target] ${target.domain} already enriched — skipping`);
-    return { target_id, contacts: [], already_enriched: true };
+    if (account_id) {
+      // enriched_at is global — check if THIS account already has contacts for this target
+      const { data: acctContacts } = await admin
+        .from('contacts').select('id')
+        .eq('target_id', target_id).eq('account_id', account_id);
+      if ((acctContacts ?? []).length > 0) {
+        console.log(`[enrich_target] ${target.domain} already enriched for this account — skipping`);
+        return { target_id, contacts: acctContacts, already_enriched: true };
+      }
+      console.log(`[enrich_target] ${target.domain} globally enriched but no contacts for this account — re-enriching`);
+    } else {
+      console.log(`[enrich_target] ${target.domain} already enriched — skipping`);
+      return { target_id, contacts: [], already_enriched: true };
+    }
   }
 
   const domain = target.domain;
@@ -101,32 +115,38 @@ export async function executeSkill({
     const { data: itpRow } = await admin.from('itp').select('*').eq('id', leadRow.itp_id).single();
     itp = itpRow;
   }
-  const account_id = itp?.account_id ?? null;
+  account_id = account_id ?? itp?.account_id ?? null;
+
+  // If the target was globally enriched but we're re-enriching for a new account,
+  // skip the Apollo company call — the data is already on the target row.
+  const skipCompanyData = !!target.enriched_at;
 
   // ── Step 1: Apollo company enrichment (1 credit) ──────────────────────
   let apolloCompany = null;
-  try {
-    apolloCompany = await enrichCompany(domain);
-    await increment(runId, { apollo_credits_used: 1 });
-  } catch (err) {
-    console.warn(`[enrich_target] Apollo company error for ${domain}:`, err.message);
-  }
-
-  // enriched_at is set later, only if we actually find contacts — so targets
-  // with zero contacts remain retryable as Apollo's database grows.
-  const enrichmentUpdate = { enrichment_source: 'apollo' };
-  if (apolloCompany) {
-    if (apolloCompany.short_description) enrichmentUpdate.company_description = apolloCompany.short_description;
-    if (apolloCompany.industry)          enrichmentUpdate.industry = apolloCompany.industry;
-    if (apolloCompany.estimated_num_employees) enrichmentUpdate.employee_count = apolloCompany.estimated_num_employees;
-    if (apolloCompany.phone)             enrichmentUpdate.company_phone = apolloCompany.phone;
-    if (apolloCompany.linkedin_url)      enrichmentUpdate.company_linkedin = apolloCompany.linkedin_url;
-    if (apolloCompany.city || apolloCompany.country) {
-      enrichmentUpdate.company_location = [apolloCompany.city, apolloCompany.state, apolloCompany.country]
-        .filter(Boolean).join(', ');
+  if (!skipCompanyData) {
+    try {
+      apolloCompany = await enrichCompany(domain);
+      await increment(runId, { apollo_credits_used: 1 });
+    } catch (err) {
+      console.warn(`[enrich_target] Apollo company error for ${domain}:`, err.message);
     }
+
+    // enriched_at is set later, only if we actually find contacts — so targets
+    // with zero contacts remain retryable as Apollo's database grows.
+    const enrichmentUpdate = { enrichment_source: 'apollo' };
+    if (apolloCompany) {
+      if (apolloCompany.short_description) enrichmentUpdate.company_description = apolloCompany.short_description;
+      if (apolloCompany.industry)          enrichmentUpdate.industry = apolloCompany.industry;
+      if (apolloCompany.estimated_num_employees) enrichmentUpdate.employee_count = apolloCompany.estimated_num_employees;
+      if (apolloCompany.phone)             enrichmentUpdate.company_phone = apolloCompany.phone;
+      if (apolloCompany.linkedin_url)      enrichmentUpdate.company_linkedin = apolloCompany.linkedin_url;
+      if (apolloCompany.city || apolloCompany.country) {
+        enrichmentUpdate.company_location = [apolloCompany.city, apolloCompany.state, apolloCompany.country]
+          .filter(Boolean).join(', ');
+      }
+    }
+    await admin.from('targets').update(enrichmentUpdate).eq('id', target_id);
   }
-  await admin.from('targets').update(enrichmentUpdate).eq('id', target_id);
 
   // ── Step 2: Website scrape ─────────────────────────────────────────────
   let scraped = { pages_scraped: 0, all_text: '', all_emails: [], blocked: false };

@@ -24,7 +24,7 @@ import { scrapeSite } from '../../../../lib/lead_gen/scraper.js';
 import { classifyLiveness, classifyLivenessBatch, CLASSIFICATION } from '../../../../lib/lead_gen/liveness_classifier.js';
 import { extractDirectoryListings } from '../../../../lib/lead_gen/directory_fanout.js';
 import { matchToCompaniesHouse } from '../../../../lib/lead_gen/ch_matcher.js';
-import { scoreCandidate, TIER } from '../../../../lib/lead_gen/itp_scorer.js';
+import { scoreCandidate, scoreCandidatesBatch, TIER } from '../../../../lib/lead_gen/itp_scorer.js';
 import { executeSkill as runEnrichTarget } from '../enrich_target/index.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 import { broadcastSkillStatus } from '../../../../intelligence/skill_status_broadcaster/index.js';
@@ -117,9 +117,11 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id = null
           silent:             true,
           runId,
           apollo_reveals_cap: APOLLO_REVEALS_CAP,
+          account_id:         userDetails.account_id,
         });
         if (enrichResult.already_enriched) {
-          const { data: existingContacts } = await admin.from('contacts').select('id').eq('target_id', target.id);
+          const { data: existingContacts } = await admin.from('contacts').select('id')
+            .eq('target_id', target.id).eq('account_id', userDetails.account_id);
           await addContactsToCampaign(campaign_id, { contacts: existingContacts ?? [] }, user_details_id);
         } else {
           await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
@@ -128,7 +130,6 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id = null
         console.error(`[100_leads] Enrich error for internal target ${target.domain}:`, err.message);
       }
     }
-    await increment(runId, { haiku_calls_used: internalLeads.length });
 
     // ── Steps 3–11: Search rounds ───────────────────────────────────────
     for (let round = 1; round <= MAX_ROUNDS; round++) {
@@ -367,10 +368,12 @@ async function runSearchRound({ admin, itp, account, user_details_id, campaign_i
         silent:             true,
         runId,
         apollo_reveals_cap: APOLLO_REVEALS_CAP,
+        account_id:         account.id,
       });
       if (enrichResult.already_enriched) {
         // Target was enriched in a previous run — load existing contacts and add to campaign
-        const { data: existingContacts } = await admin.from('contacts').select('id').eq('target_id', saved.target_id);
+        const { data: existingContacts } = await admin.from('contacts').select('id')
+          .eq('target_id', saved.target_id).eq('account_id', account.id);
         await addContactsToCampaign(campaign_id, { contacts: existingContacts ?? [] }, user_details_id);
       } else {
         await addContactsToCampaign(campaign_id, enrichResult, user_details_id);
@@ -455,81 +458,154 @@ async function countApprovedLeads(admin, itpId) {
 }
 
 /**
- * Score existing account targets that don't yet have a lead for this ITP.
- * Returns targets that pass the A/B threshold, sorted by score descending.
- * No re-scraping — scores from title + domain only.
+ * Search the GLOBAL targets table for companies that may fit this ITP.
+ * Uses a cheap SQL pre-filter (keywords + enriched targets) then batch LLM scoring.
+ * Returns tier A/B targets sorted by score descending.
  */
 async function scoreInternalTargets({ admin, itp, account, runId, seenDomains }) {
-  // Domains already linked to this ITP
+  const MAX_CANDIDATES = 500;
+  const BATCH_SIZE = 25;
+
+  // Domains already linked to this ITP — excluded in JS to avoid URL-limit blowup
   const { data: thisItpLeads } = await admin
     .from('leads').select('targets(domain)').eq('itp_id', itp.id);
   const alreadyLinked = new Set(
     (thisItpLeads ?? []).map(l => l.targets?.domain).filter(Boolean)
   );
 
-  // Candidate domains: in account's pool but not yet for this ITP
-  const candidateDomains = [...seenDomains].filter(d => !alreadyLinked.has(d));
-  if (!candidateDomains.length) return [];
+  // ── SQL pre-filter: keyword match on title/description ───────────────────
+  const keywords = (itp.search_profile?.company_name_keywords ?? [])
+    .filter(Boolean).map(k => k.toLowerCase().trim()).slice(0, 20);
 
-  // Fetch target records for those domains (in batches of 100 to avoid URL limits)
-  const allTargets = [];
-  for (let i = 0; i < candidateDomains.length; i += 100) {
-    const batch = candidateDomains.slice(i, i + 100);
-    const { data } = await admin
-      .from('targets').select('id, title, domain, company_location')
-      .in('domain', batch);
-    if (data) allTargets.push(...data);
-  }
-  if (!allTargets.length) return [];
+  const allCandidates = [];
+  const seenIds = new Set();
 
-  console.log(`[100_leads] Scoring ${allTargets.length} internal targets against this ITP…`);
+  // Pass 1: keyword-matched targets (most relevant — scored first)
+  if (keywords.length > 0) {
+    const orParts = keywords.flatMap(kw => [
+      `title.ilike.%${kw}%`,
+      `company_description.ilike.%${kw}%`,
+    ]).join(',');
 
-  const confirmed_positives = await loadConfirmedPositives(admin, itp.id);
+    let offset = 0;
+    while (allCandidates.length < MAX_CANDIDATES) {
+      const { data, error } = await admin
+        .from('targets')
+        .select('id, title, domain, company_location, company_description, industry, employee_count')
+        .or(orParts)
+        .not('domain', 'is', null)
+        .order('enriched_at', { ascending: false, nullsFirst: false })
+        .range(offset, offset + 199);
 
-  const results = await runParallel(allTargets, async (target) => {
-    const result = await scoreCandidate({
-      itp,
-      account,
-      evidence: {
-        company_name:     target.title,
-        domain:           target.domain,
-        discovery_source: 'internal_database',
-      },
-      confirmed_positives,
-    });
-    if (result.tier === TIER.A || result.tier === TIER.B) {
-      return { target, ...result };
+      if (error) { console.error('[100_leads] Keyword pre-filter error:', error.message); break; }
+      if (!data || data.length === 0) break;
+      for (const t of data) {
+        if (!seenIds.has(t.id)) { seenIds.add(t.id); allCandidates.push(t); }
+      }
+      if (data.length < 200) break;
+      offset += 200;
     }
-    return null;
-  }, MAX_SCORE_CONCURRENCY);
+  }
 
-  return results
-    .filter(Boolean)
-    .sort((a, b) => b.score - a.score);
+  // Pass 2: enriched targets not yet caught by keyword filter
+  if (allCandidates.length < MAX_CANDIDATES) {
+    const { data: enrichedRows } = await admin
+      .from('targets')
+      .select('id, title, domain, company_location, company_description, industry, employee_count')
+      .not('company_description', 'is', null)
+      .not('domain', 'is', null)
+      .order('enriched_at', { ascending: false })
+      .limit(MAX_CANDIDATES - allCandidates.length);
+
+    for (const t of enrichedRows ?? []) {
+      if (!seenIds.has(t.id)) { seenIds.add(t.id); allCandidates.push(t); }
+    }
+  }
+
+  // JS-side exclusions (avoids passing thousands of domains to PostgREST)
+  const filtered = allCandidates.filter(t => {
+    if (!t.domain) return false;
+    const d = t.domain.toLowerCase();
+    if (seenDomains.has(d)) return false;
+    if (alreadyLinked.has(d)) return false;
+    return true;
+  });
+
+  if (!filtered.length) {
+    console.log('[100_leads] scoreInternalTargets: no candidates after exclusions');
+    return [];
+  }
+
+  console.log(`[100_leads] scoreInternalTargets: scoring ${filtered.length} global candidates…`);
+
+  // ── Batched LLM scoring ──────────────────────────────────────────────────
+  const confirmed_positives = await loadConfirmedPositives(admin, itp.id);
+  const qualifiedResults = [];
+  let llmCalls = 0;
+
+  for (let i = 0; i < filtered.length; i += BATCH_SIZE) {
+    const batch = filtered.slice(i, i + BATCH_SIZE);
+    const candidates = batch.map(t => ({
+      company_name:        t.title ?? t.domain,
+      domain:              t.domain,
+      company_description: t.company_description ?? null,
+      industry:            t.industry ?? null,
+      employee_count:      t.employee_count ?? null,
+      company_location:    t.company_location ?? null,
+    }));
+
+    let batchResults;
+    try {
+      batchResults = await scoreCandidatesBatch({ itp, account, candidates, confirmed_positives });
+      llmCalls++;
+    } catch (err) {
+      console.error(`[100_leads] scoreCandidatesBatch error (batch ${Math.floor(i / BATCH_SIZE) + 1}):`, err.message);
+      continue;
+    }
+
+    for (let j = 0; j < batchResults.length; j++) {
+      const result = batchResults[j];
+      if (result.tier === TIER.A || result.tier === TIER.B) {
+        qualifiedResults.push({ target: batch[j], ...result });
+      }
+    }
+  }
+
+  await increment(runId, { haiku_calls_used: llmCalls });
+
+  console.log(`[100_leads] scoreInternalTargets: ${qualifiedResults.length} tier A/B from ${filtered.length} candidates (${llmCalls} LLM calls)`);
+  return qualifiedResults.sort((a, b) => b.score - a.score);
 }
 
 /**
- * Build a set of all domains already seen on this account.
- * Prevents re-surfacing companies already in the system.
+ * Build a set of ALL known target domains from the global targets table.
+ * Also excludes this account's customer domains.
+ * Used as a dedup fence for search rounds — prevents re-surfacing any known company.
  */
 async function buildDedupSet(admin, accountId) {
-  const { data: itpRows } = await admin
-    .from('itp').select('id').eq('account_id', accountId);
-  const itpIds = (itpRows ?? []).map(r => r.id);
-
   const domains = new Set();
 
-  if (itpIds.length) {
-    const { data: leadRows } = await admin
-      .from('leads').select('target_id').in('itp_id', itpIds);
-    const targetIds = [...new Set((leadRows ?? []).map(l => l.target_id).filter(Boolean))];
-    if (targetIds.length) {
-      const { data: targetRows } = await admin
-        .from('targets').select('domain').in('id', targetIds);
-      (targetRows ?? []).forEach(t => t.domain && domains.add(t.domain));
+  // Paginate through all global target domains (avoids URL-limit issues with .in())
+  const PAGE_SIZE = 1000;
+  let offset = 0;
+  while (true) {
+    const { data: targetRows, error } = await admin
+      .from('targets')
+      .select('domain')
+      .not('domain', 'is', null)
+      .range(offset, offset + PAGE_SIZE - 1);
+
+    if (error) {
+      console.error('[100_leads] buildDedupSet: targets fetch error:', error.message);
+      break;
     }
+    if (!targetRows || targetRows.length === 0) break;
+    targetRows.forEach(t => t.domain && domains.add(t.domain.toLowerCase()));
+    if (targetRows.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
   }
 
+  // Always exclude this account's own customer domains
   const { data: custRows } = await admin
     .from('customers').select('organisation_website').eq('account_id', accountId);
   (custRows ?? []).forEach(c => {
@@ -541,6 +617,7 @@ async function buildDedupSet(admin, accountId) {
     }
   });
 
+  console.log(`[100_leads] buildDedupSet: ${domains.size} domains loaded globally`);
   return domains;
 }
 
