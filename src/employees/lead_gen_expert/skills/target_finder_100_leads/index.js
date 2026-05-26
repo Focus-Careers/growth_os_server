@@ -101,7 +101,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id = null
         score,
         score_reason:     reasoning ?? null,
         discovery_source: 'internal_database',
-        approved:         true,
+        approved:         account?.auto_approve_leads ? true : null,
       }).select('id').single();
       if (leadErr) {
         console.error(`[100_leads] Internal lead insert error for ${target.domain}:`, leadErr.message);
@@ -358,7 +358,7 @@ async function runSearchRound({ admin, itp, account, user_details_id, campaign_i
   for (const candidate of qualified) {
     if (roundApprovedCount >= targetCount) break;
 
-    const saved = await persistCandidate(admin, candidate, itp, account.id);
+    const saved = await persistCandidate(admin, candidate, itp, account.id, account?.auto_approve_leads ?? false);
     if (!saved) continue;
 
     roundApprovedCount++;
@@ -650,7 +650,7 @@ async function loadConfirmedPositives(admin, itpId) {
  * Includes CH data on the target when available.
  * Returns { target_id, lead_id } or null on failure.
  */
-async function persistCandidate(admin, candidate, itp, accountId) {
+async function persistCandidate(admin, candidate, itp, accountId, autoApprove = false) {
   const domain   = candidate.domain ?? null;
   const metadata = candidate.classification?.extracted_metadata ?? {};
   const chRecord = candidate.ch?.ch_record ?? null;
@@ -732,7 +732,7 @@ async function persistCandidate(admin, candidate, itp, accountId) {
       score:            candidate.score,
       score_reason:     candidate.reasoning ?? null,
       discovery_source: candidate.discovery_source ?? 'serper_direct',
-      approved:         true,
+      approved:         autoApprove ? true : null,
     })
     .select('id')
     .single();

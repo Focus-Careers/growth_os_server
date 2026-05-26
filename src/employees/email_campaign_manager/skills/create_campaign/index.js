@@ -159,5 +159,6 @@ export async function executeSkill({ user_details_id, itp_id, campaign_name, num
     },
   });
 
-  return { campaign_id: campaign.id };
+  // Return campaign_name (not the UUID) so Watson references it by name in its response
+  return { campaign_name };
 }

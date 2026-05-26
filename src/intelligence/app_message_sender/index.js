@@ -41,6 +41,7 @@ const skillPromptMap = {
   'business_analyst/define_itp': 'define_itp.md',
   'lead_gen_expert/itp_refiner': 'itp_refiner.md',
   'lead_gen_expert/target_finder_ten_leads': 'target_finder_ten_leads.md',
+  'lead_gen_expert/target_finder_100_leads': 'target_finder_100_leads.md',
   'email_campaign_manager/create_campaign': 'create_campaign.md',
   'email_campaign_manager/launch_campaign': 'launch_campaign.md',
   'email_campaign_manager/sync_to_smartlead': 'sync_to_smartlead.md',

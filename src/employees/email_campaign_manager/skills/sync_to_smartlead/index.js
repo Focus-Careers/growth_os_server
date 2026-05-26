@@ -82,13 +82,20 @@ export async function executeSkill({ user_details_id, campaign_id }) {
   }
 
   // ── Step 5: Attach email account ───────────────────────────────────
+  let senderOk = false;
+  let senderError = null;
   if (campaign.sender_id) {
-    const { slEmailAccountId } = await resolveSmartleadSender(campaign.sender_id);
+    const { slEmailAccountId, sender } = await resolveSmartleadSender(campaign.sender_id);
     if (slEmailAccountId) {
       await attachEmailAccount(slCampaignId, parseInt(slEmailAccountId));
+      senderOk = true;
+    } else {
+      senderError = sender?.verification_error ?? 'Could not connect email account to Smartlead';
+      console.warn(`[sync_to_smartlead] Sender failed to attach for campaign ${campaign_id}: ${senderError}`);
     }
   } else {
     console.log('[sync_to_smartlead] No sender_id on campaign, skipping email account setup');
+    senderError = 'No sender configured on this campaign';
   }
 
   // ── Step 6: Push leads (contacts) ──────────────────────────────────
@@ -145,6 +152,8 @@ export async function executeSkill({ user_details_id, campaign_id }) {
       smartlead_campaign_id: slCampaignId,
       leads_pushed: campaignContacts?.length ?? 0,
       status: 'synced_not_active',
+      sender_ok: senderOk,
+      sender_error: senderError,
     },
   });
 
