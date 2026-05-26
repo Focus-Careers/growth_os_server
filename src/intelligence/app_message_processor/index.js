@@ -14,15 +14,15 @@ import { sendDirectResponse } from '../app_message_sender/index.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const employeesDir = join(__dirname, '../../employees');
 
-async function callClaude({ model, max_completion_tokens, system, messages, ...rest }, retries = 4) {
+async function callLLM({ model, max_completion_tokens, system, messages, ...rest }, retries = 4) {
   const openaiMessages = system
     ? [{ role: 'system', content: typeof system === 'string' ? system : system.map(b => b.text ?? b).join('\n\n') }, ...messages]
     : messages;
-  const params = { model, max_completion_tokens: max_completion_tokens, messages: openaiMessages, ...rest };
+  const params = { model, max_completion_tokens, messages: openaiMessages, ...rest };
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const res = await getOpenAI().chat.completions.create(params);
-      return { content: [{ text: res.choices[0].message.content }] };
+      return res.choices[0].message; // OpenAI message object: { content, refusal, ... }
     } catch (err) {
       const status = err?.status;
       if ((status === 429 || status === 529) && attempt < retries - 1) {
@@ -154,11 +154,9 @@ export async function processMessage(record) {
     `## ${employee} / ${skill}\n${content}`
   ).join('\n\n');
 
-  // Static portion (decision logic + skill list) is cached; dynamic context is a separate block
-  const systemBlocks = [
-    { type: 'text', text: `${decisionPrompt}\n\n${skillsSection}`, cache_control: { type: 'ephemeral' } },
-  ];
-  if (activeContext) systemBlocks.push({ type: 'text', text: activeContext });
+  // Plain string system prompt. OpenAI automatically caches long, stable prefixes,
+  // so keep the static decision logic + skill list first and the dynamic state last.
+  const systemPrompt = `${decisionPrompt}\n\n${skillsSection}${activeContext}`;
 
   // Build conversation history — last 10 messages for context, with the actual user message highlighted
   const recentHistory = (history ?? []).slice(-10);
@@ -174,29 +172,58 @@ export async function processMessage(record) {
 
   console.log('[amp] LATEST USER MESSAGE:', userMessage);
 
-  const claudeRequest = {
+  // Strict structured output guarantees a schema-valid decision — the model
+  // literally cannot emit malformed JSON, so a parse failure can no longer
+  // silently misroute a real intent into direct_response.
+  const routeRequest = {
     model: 'gpt-5-mini',
-    max_completion_tokens: 256,
-    system: systemBlocks,
+    reasoning_effort: 'medium', // routing is a judgement call; default global is 'low'
+    max_completion_tokens: 4096, // floored to 8192 in config/openai.js for reasoning headroom; JSON output itself is tiny
+    system: systemPrompt,
     messages: [{ role: 'user', content: conversationHistory }],
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'route_decision',
+        strict: true,
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            path: { type: 'string', enum: ['direct_response', 'trigger_skill'] },
+            employee: { type: ['string', 'null'] },
+            skill: { type: ['string', 'null'] },
+          },
+          required: ['path', 'employee', 'skill'],
+        },
+      },
+    },
   };
 
-  const response = await callClaude(claudeRequest);
+  const message = await callLLM(routeRequest);
 
-  const raw = response.content[0].text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
   let decision;
   let parseError = null;
-  try {
-    decision = JSON.parse(raw);
-  } catch (err) {
-    parseError = err;
-    console.error(`[amp] Failed to parse Claude response as JSON for user ${user_details_id}:`, err.message, '| raw text:', raw);
+  let raw = '';
+  if (message?.refusal) {
+    raw = message.refusal;
+    parseError = new Error('model refusal: ' + message.refusal);
+    console.error(`[amp] Model refused to route for user ${user_details_id}:`, message.refusal);
     decision = { path: 'direct_response' };
+  } else {
+    raw = (message?.content ?? '').trim();
+    try {
+      decision = JSON.parse(raw);
+    } catch (err) {
+      parseError = err;
+      console.error(`[amp] Failed to parse routing response as JSON for user ${user_details_id}:`, err.message, '| raw text:', raw);
+      decision = { path: 'direct_response' };
+    }
   }
 
   await getSupabaseAdmin().from('app_message_processor_logs').insert({
     user_details_id,
-    request: { messages: claudeRequest.messages, system: claudeRequest.system },
+    request: { messages: routeRequest.messages, system: routeRequest.system },
     response: parseError ? { path: 'direct_response', _parse_error: true, _raw: raw.slice(0, 1000) } : decision,
   });
 

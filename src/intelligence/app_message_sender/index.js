@@ -14,15 +14,15 @@ import { broadcastTyping } from '../typing_broadcaster/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-async function callClaude({ model, max_completion_tokens, system, messages, ...rest }, retries = 4) {
+async function callLLM({ model, max_completion_tokens, system, messages, ...rest }, retries = 4) {
   const openaiMessages = system
     ? [{ role: 'system', content: system }, ...messages]
     : messages;
-  const params = { model, max_completion_tokens: max_completion_tokens, messages: openaiMessages, ...rest };
+  const params = { model, max_completion_tokens, messages: openaiMessages, ...rest };
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const res = await getOpenAI().chat.completions.create(params);
-      return { content: [{ text: res.choices[0].message.content }] };
+      return res.choices[0].message; // OpenAI message object: { content, refusal, ... }
     } catch (err) {
       const status = err?.status;
       if ((status === 429 || status === 529) && attempt < retries - 1) {
@@ -54,14 +54,14 @@ export async function sendDirectResponse({ user_details_id, conversationHistory 
   try {
     const directResponsePrompt = await readFile(join(__dirname, 'direct_response.md'), 'utf-8');
 
-    const response = await callClaude({
+    const response = await callLLM({
       model: 'gpt-5-mini',
       max_completion_tokens: 512,
       system: directResponsePrompt,
       messages: [{ role: 'user', content: conversationHistory }],
     });
 
-    const message_body = response.content[0].text.trim();
+    const message_body = (response?.content ?? '').trim();
 
     const { error } = await getSupabaseAdmin()
       .from('messages')
@@ -88,14 +88,17 @@ export async function sendAppMessage({ type, employee, skill, user_details_id, s
 
     const userMessage = JSON.stringify({ type, employee, skill, output }, null, 2);
 
-    const response = await callClaude({
-      model: 'gpt-5-nano',
+    // Narration of structured skill output into a user-facing message.
+    // Was gpt-5-nano — too weak for this nuanced, highly visible job (broken
+    // phrasing, miscounted/duplicated figures). Upgraded to gpt-5-mini.
+    const response = await callLLM({
+      model: 'gpt-5-mini',
       max_completion_tokens: 1024,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });
 
-    const message_body = response.content[0].text.trim();
+    const message_body = (response?.content ?? '').trim();
 
     const { error } = await getSupabaseAdmin()
       .from('messages')

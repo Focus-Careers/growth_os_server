@@ -93,12 +93,12 @@ export async function analyseAndGreet(user_details_id) {
     context = `The last thing Watson said was: "${snippet}"`;
   }
 
-  // 5. Generate greeting via Haiku
+  // 5. Generate greeting
   const prompt = await readFile(join(__dirname, 'prompt.md'), 'utf-8');
   const firstName = ud.firstname ?? 'there';
 
   const response = await getOpenAI().chat.completions.create({
-    model: 'gpt-5-nano',
+    model: 'gpt-5-mini', // was gpt-5-nano — user-facing greeting, nano too weak
     max_completion_tokens: 256,
     messages: [
       { role: 'system', content: prompt },

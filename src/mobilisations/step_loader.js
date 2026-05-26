@@ -96,7 +96,7 @@ export async function getStepFromFlow(mobilisationName, stepId, value = null, us
     const promptPath = join(__dirname, mobilisationName, step.prompt_file);
     const prompt = await readFile(promptPath, 'utf-8');
     const response = await getOpenAI().chat.completions.create({
-      model: 'gpt-5-nano',
+      model: 'gpt-5-mini', // was gpt-5-nano — generates user-facing step/option messages
       max_completion_tokens: 256,
       messages: [{ role: 'user', content: prompt }],
     });
