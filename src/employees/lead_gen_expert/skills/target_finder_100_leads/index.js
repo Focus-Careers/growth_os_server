@@ -80,7 +80,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id = null
       const count = await countApprovedLeads(admin, itp.id);
       if (count >= targetCount) {
         await closeRun(runId, 'completed');
-        return finalize({ admin, itp, user_details_id, targetCount, runId });
+        return finalize({ admin, itp, user_details_id, campaign_id, targetCount, runId });
       }
     }
 
@@ -163,7 +163,7 @@ export async function executeSkill({ user_details_id, itp_id, campaign_id = null
     }
 
     await closeRun(runId, 'completed');
-    return finalize({ admin, itp, user_details_id, targetCount, runId });
+    return finalize({ admin, itp, user_details_id, campaign_id, targetCount, runId });
 
   } catch (err) {
     console.error('[100_leads] Fatal error:', err.message);
@@ -836,7 +836,7 @@ async function addContactsToCampaign(campaign_id, enrichResult, user_details_id)
 /**
  * Finalise the run — emit processSkillOutput for the app message.
  */
-async function finalize({ admin, itp, user_details_id, targetCount, runId }) {
+async function finalize({ admin, itp, user_details_id, campaign_id, targetCount, runId }) {
   await progress(user_details_id, 'Done!', 100);
 
   const { data: finalLeads } = await admin
@@ -844,20 +844,34 @@ async function finalize({ admin, itp, user_details_id, targetCount, runId }) {
     .select('id, approved')
     .eq('itp_id', itp.id);
 
-  const approvedCount = (finalLeads ?? []).filter(l => l.approved).length;
-  console.log(`[100_leads] Finished — ${approvedCount} approved leads`);
+  const approvedLeads = (finalLeads ?? []).filter(l => l.approved).length;
+
+  // Contacts actually loaded into the campaign (the people) — distinct from the
+  // approved leads/companies they came from. Null when this run isn't tied to a campaign.
+  let contactsLoaded = null;
+  if (campaign_id) {
+    const { count } = await admin
+      .from('campaign_contacts')
+      .select('id', { count: 'exact', head: true })
+      .eq('campaign_id', campaign_id);
+    contactsLoaded = count ?? 0;
+  }
+
+  console.log(`[100_leads] Finished — ${approvedLeads} approved leads, ${contactsLoaded ?? 'n/a'} contacts loaded`);
 
   await processSkillOutput({
     employee:        'lead_gen_expert',
     skill_name:      'target_finder_100_leads',
     user_details_id,
     output: {
-      itp_id:         itp.id,
-      approved_count: approvedCount,
-      target_count:   targetCount,
-      total_leads:    (finalLeads ?? []).length,
+      itp_id:          itp.id,
+      itp_name:        itp.name ?? null,
+      approved_leads:  approvedLeads,
+      contacts_loaded: contactsLoaded,
+      total_companies: (finalLeads ?? []).length,
+      target_count:    targetCount,
     },
   });
 
-  return { user_details_id, itp_id: itp.id, approved_count: approvedCount };
+  return { user_details_id, itp_id: itp.id, approved_leads: approvedLeads, contacts_loaded: contactsLoaded };
 }

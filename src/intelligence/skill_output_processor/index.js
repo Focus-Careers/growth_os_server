@@ -127,10 +127,9 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
     }
 
     case 'lead_gen_expert/target_finder_100_leads': {
-      const approvedCount = output.approved_count ?? 0;
-      const totalTargets = output.total_targets ?? 0;
+      const approvedLeads = output.approved_leads ?? 0;
 
-      if (approvedCount >= output.target_count) {
+      if (approvedLeads >= output.target_count) {
         const { data: ud } = await getSupabaseAdmin()
           .from('user_details').select('queued_mobilisations').eq('id', user_details_id).single();
         const queue = ud?.queued_mobilisations ?? [];
@@ -149,7 +148,12 @@ export async function processSkillOutput({ employee, skill_name, user_details_id
         skill: skill_name,
         user_details_id,
         sidebar: null,
-        output: { approved_count: approvedCount, total_targets: totalTargets, itp_id: output.itp_id },
+        output: {
+          approved_leads: approvedLeads,
+          contacts_loaded: output.contacts_loaded ?? null,
+          itp_name: output.itp_name ?? null,
+          itp_id: output.itp_id,
+        },
       });
       break;
     }
