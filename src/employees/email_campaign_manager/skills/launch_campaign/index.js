@@ -24,10 +24,10 @@ export async function executeSkill({ user_details_id, campaign_id, sender_id }) 
     return { error: 'update_failed' };
   }
 
-  // Get the campaign's ITP to trigger target finder
+  // Get the campaign's ITP to trigger target finder, and its name for messaging
   const { data: campaign } = await admin
     .from('campaigns')
-    .select('itp_id')
+    .select('itp_id, name')
     .eq('id', campaign_id)
     .single();
 
@@ -52,7 +52,7 @@ export async function executeSkill({ user_details_id, campaign_id, sender_id }) 
     employee: 'email_campaign_manager',
     skill_name: 'launch_campaign',
     user_details_id,
-    output: { campaign_id, status: 'active' },
+    output: { campaign_id, campaign_name: campaign?.name ?? null, status: 'active' },
   });
 
   return { campaign_id, status: 'active' };
