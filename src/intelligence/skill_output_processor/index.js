@@ -6,8 +6,15 @@
 
 import { sendAppMessage } from '../app_message_sender/index.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
+import { isAborted } from '../../lib/cancellation.js';
 
 export async function processSkillOutput({ employee, skill_name, user_details_id, output }) {
+  // If the user stopped this run, don't post its result message / open a sidebar.
+  if (user_details_id && isAborted(user_details_id)) {
+    console.log(`[skill_output] suppressed for cancelled run: ${employee}/${skill_name} (user ${user_details_id})`);
+    return;
+  }
+
   const key = `${employee}/${skill_name}`;
 
   switch (key) {

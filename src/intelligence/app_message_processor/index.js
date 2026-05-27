@@ -10,6 +10,7 @@ import { dirname, join } from 'path';
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { getOpenAI } from '../../config/openai.js';
 import { sendDirectResponse } from '../app_message_sender/index.js';
+import { stopForUser } from '../../lib/stop.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const employeesDir = join(__dirname, '../../employees');
@@ -78,6 +79,23 @@ export async function processMessage(record) {
 
   console.log(`[amp] signup_complete=${userDetails?.signup_complete} active_mobilisation=${userDetails?.active_mobilisation} for ${user_details_id}`);
   if (!userDetails?.signup_complete) return;
+
+  // Deterministic stop intercept — runs BEFORE the active_mobilisation guard so
+  // the user can bail out even while a mobilisation has the chat "locked". No LLM
+  // on this path: stop is the one command that must never be misrouted.
+  const cleaned = (record.message_body ?? '').toLowerCase().trim().replace(/[.!?]+$/, '');
+  const stopWords = ['stop', 'cancel', 'abort', 'quit', 'stop it', 'never mind', 'nevermind'];
+  if (stopWords.includes(cleaned)) {
+    console.log(`[amp] stop intercept for ${user_details_id}: "${cleaned}"`);
+    await stopForUser(user_details_id);
+    await getSupabaseAdmin().from('messages').insert({
+      user_details_id,
+      message_body: "Okay — I've stopped that. What would you like to do next?",
+      is_agent: true,
+    });
+    return;
+  }
+
   if (userDetails?.active_mobilisation) return;
 
   try {

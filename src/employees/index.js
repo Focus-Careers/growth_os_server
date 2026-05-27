@@ -19,6 +19,7 @@ import { executeSkill as emailCampaignManager_launchCampaign } from './email_cam
 import { executeSkill as emailCampaignManager_syncToSmartlead } from './email_campaign_manager/skills/sync_to_smartlead/index.js';
 import { broadcastSkillStatus } from '../intelligence/skill_status_broadcaster/index.js';
 import { getSupabaseAdmin } from '../config/supabase.js';
+import { registerRun, clearRun, isAborted } from '../lib/cancellation.js';
 
 // Skills that handle their own progress broadcasting — skip the initial persisted message
 const skillsWithProgress = new Set([
@@ -121,10 +122,17 @@ export async function dispatchSkill(employee, skill, inputs) {
       .eq('id', inputs.user_details_id);
   }
 
+  // Register a cancellation handle for this run and expose the signal to the
+  // skill (Tier 2 skills can thread it into fetch/LLM calls and checkpoints).
+  const controller = registerRun(inputs.user_details_id);
+  inputs.signal = controller.signal;
+
   try {
     const result = await fn(inputs);
 
-    if (inputs.user_details_id) {
+    // If the user stopped this run, swallow the result silently — state was
+    // already cleared by stopForUser and the output is suppressed downstream.
+    if (inputs.user_details_id && !isAborted(inputs.user_details_id)) {
       await broadcastSkillStatus(inputs.user_details_id, {
         employee,
         skill,
@@ -140,7 +148,11 @@ export async function dispatchSkill(employee, skill, inputs) {
     return result;
 
   } catch (err) {
-    if (inputs.user_details_id) {
+    // A user-initiated stop is not an error — don't post an apology or mark the
+    // skill failed. stopForUser has already cleared the state.
+    const cancelled = inputs.user_details_id && (isAborted(inputs.user_details_id) || err?.name === 'AbortError');
+
+    if (inputs.user_details_id && !cancelled) {
       await broadcastSkillStatus(inputs.user_details_id, {
         employee,
         skill,
@@ -164,7 +176,11 @@ export async function dispatchSkill(employee, skill, inputs) {
       await getSupabaseAdmin()
         .from('messages')
         .insert({ user_details_id: inputs.user_details_id, message_body: errorMessage, is_agent: true });
+    } else if (cancelled) {
+      console.log(`[dispatchSkill] ${key} stopped by user — skipping error message`);
     }
     throw err;
+  } finally {
+    clearRun(inputs.user_details_id, controller);
   }
 }

@@ -1,8 +1,28 @@
 import { Router } from 'express';
 import { getStep, triggerMobilisation, completeMobilisation } from './index.js';
 import { getSupabaseAdmin } from '../config/supabase.js';
+import { stopForUser } from '../lib/stop.js';
 
 const router = Router();
+
+// POST /api/mobilisation/cancel
+// Body: { user_details_id }
+// User-initiated stop (e.g. a Stop button). Halts any in-flight run, clears the
+// mobilisation/skill state that locks the chat, and broadcasts a `cancelled`
+// event so the frontend tears down option pills and re-enables the input.
+router.post('/cancel', async (req, res) => {
+  try {
+    const { user_details_id } = req.body;
+    if (!user_details_id) {
+      return res.status(400).json({ error: 'user_details_id is required' });
+    }
+    await stopForUser(user_details_id);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('mobilisation cancel error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // POST /api/mobilisation/step
 // Body: { mobilisation: string, step_id: string }
