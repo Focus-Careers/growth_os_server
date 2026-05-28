@@ -486,6 +486,8 @@ async function scoreInternalTargets({ admin, itp, account, runId, seenDomains })
   const allCandidates = [];
   const seenIds = new Set();
 
+  const SELECT_FIELDS = 'id, title, domain, company_location, company_description, industry, employee_count, website_summary, sic_codes, company_status, incorporated_at';
+
   // Pass 1: keyword-matched targets (most relevant — scored first)
   if (keywords.length > 0) {
     const orParts = keywords.flatMap(kw => [
@@ -497,7 +499,7 @@ async function scoreInternalTargets({ admin, itp, account, runId, seenDomains })
     while (allCandidates.length < MAX_CANDIDATES) {
       const { data, error } = await admin
         .from('targets')
-        .select('id, title, domain, company_location, company_description, industry, employee_count')
+        .select(SELECT_FIELDS)
         .or(orParts)
         .not('domain', 'is', null)
         .order('enriched_at', { ascending: false, nullsFirst: false })
@@ -517,7 +519,7 @@ async function scoreInternalTargets({ admin, itp, account, runId, seenDomains })
   if (allCandidates.length < MAX_CANDIDATES) {
     const { data: enrichedRows } = await admin
       .from('targets')
-      .select('id, title, domain, company_location, company_description, industry, employee_count')
+      .select(SELECT_FIELDS)
       .not('company_description', 'is', null)
       .not('domain', 'is', null)
       .order('enriched_at', { ascending: false })
@@ -542,15 +544,57 @@ async function scoreInternalTargets({ admin, itp, account, runId, seenDomains })
     return [];
   }
 
-  console.log(`[100_leads] scoreInternalTargets: scoring ${filtered.length} global candidates…`);
+  // Split into rich (has website_summary — score individually like Serper path) and
+  // lean (no website_summary — use cheaper batch scoring)
+  const richCandidates = filtered.filter(t => t.website_summary);
+  const leanCandidates = filtered.filter(t => !t.website_summary);
+  console.log(`[100_leads] scoreInternalTargets: scoring ${filtered.length} global candidates (${richCandidates.length} rich, ${leanCandidates.length} lean)…`);
 
-  // ── Batched LLM scoring ──────────────────────────────────────────────────
   const confirmed_positives = await loadConfirmedPositives(admin, itp.id);
   const qualifiedResults = [];
   let llmCalls = 0;
 
-  for (let i = 0; i < filtered.length; i += BATCH_SIZE) {
-    const batch = filtered.slice(i, i + BATCH_SIZE);
+  // ── Rich path: individual scoreCandidate with full evidence (same as Serper path) ──
+  if (richCandidates.length > 0) {
+    const richScored = await runParallel(
+      richCandidates,
+      async t => {
+        // Reconstruct a synthetic ch_data object from persisted CH fields
+        const chData = (t.sic_codes || t.company_status || t.incorporated_at) ? {
+          sic_codes:        t.sic_codes        ?? null,
+          company_status:   t.company_status   ?? null,
+          date_of_creation: t.incorporated_at  ?? null,
+        } : null;
+
+        const result = await scoreCandidate({
+          itp,
+          account,
+          evidence: {
+            company_name:        t.title ?? t.domain,
+            domain:              t.domain,
+            website_summary:     t.website_summary,
+            directory_only:      false,
+            ch_data:             chData,
+            ch_match_confidence: chData ? 'high' : null,
+          },
+          confirmed_positives,
+        });
+        llmCalls++;
+        return { target: t, ...result };
+      },
+      MAX_SCORE_CONCURRENCY
+    );
+
+    for (const result of richScored) {
+      if (result.tier === TIER.A || result.tier === TIER.B) {
+        qualifiedResults.push(result);
+      }
+    }
+  }
+
+  // ── Lean path: batched scoring on Apollo/description fields only ──
+  for (let i = 0; i < leanCandidates.length; i += BATCH_SIZE) {
+    const batch = leanCandidates.slice(i, i + BATCH_SIZE);
     const candidates = batch.map(t => ({
       company_name:        t.title ?? t.domain,
       domain:              t.domain,
@@ -680,6 +724,10 @@ async function persistCandidate(admin, candidate, itp, accountId, autoApprove = 
         link:                    domain ? `https://${domain}` : (candidate.url ?? null),
         company_location:        location,
         companies_house_number:  chRecord?.company_number ?? null,
+        website_summary:         candidate.scraped?.all_text?.slice(0, 800) ?? null,
+        sic_codes:               chRecord?.sic_codes?.length ? chRecord.sic_codes : null,
+        company_status:          chRecord?.company_status ?? null,
+        incorporated_at:         chRecord?.date_of_creation ?? null,
       })
       .select('id')
       .single();

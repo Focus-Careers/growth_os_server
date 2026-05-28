@@ -108,7 +108,13 @@ export async function extractContactHypotheses({ scraped, domain, company_name }
 
 function normaliseEmail(email) {
   if (!email || typeof email !== 'string') return null;
-  const trimmed = email.trim().toLowerCase();
+  // Strip wrapping artefacts the LLM / HTML sometimes leaves around the address:
+  //   `>email@x.com`, `>email@x.com`, `u003eemail@x.com`, `&gt;email@x.com`,
+  //   `<email@x.com>` (mailto wrappers), plus leading/trailing whitespace.
+  const stripped = email
+    .replace(/^(?:\\?u003[ec]|&[lg]t;|[<>]|\s)+/gi, '')
+    .replace(/(?:\\?u003[ec]|&[lg]t;|[<>]|\s)+$/gi, '');
+  const trimmed = stripped.trim().toLowerCase();
   // Basic sanity check — must have @, a dot in the domain part, and no spaces
   if (!trimmed.includes('@') || trimmed.includes(' ')) return null;
   const [, domain] = trimmed.split('@');
