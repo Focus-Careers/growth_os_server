@@ -5,12 +5,16 @@ You will receive a JSON object with:
 - `itp`: The ideal target profile (summary, demographics, pain points, buying trigger, location)
 - `prior_search_queries` (optional): Queries already used in previous runs — do NOT repeat these or close variants of them
 - `existing_stable_profile` (optional): Previously generated stable fields — if present, return them unchanged and only generate fresh `search_queries`
+- `mode` (optional): If `"calibration"`, produce a smaller batch of broader queries (this is a quick sanity-check run, not a full lead-gen run)
 
 # What to return
 
 Return a JSON object with exactly these fields:
 
-**`search_queries`** (array of 15–25 strings)
+**`search_queries`** (array of strings)
+- If `mode` is `"calibration"`: produce **6–8 broad queries** — this is a quick sanity-check to surface ~10–15 candidates fast, not a full lead-gen run. Prefer the highest-yield, broadest queries; skip narrow accreditation/region combos.
+- Otherwise: produce **15–25 queries** as below.
+
 Google search queries designed to find target company websites. Each query should return a high volume of real results — prioritise yield over precision. The pipeline has separate classification and scoring stages that filter out irrelevant results, so queries do not need to be highly specific.
 
 Query design rules:

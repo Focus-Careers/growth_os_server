@@ -37,8 +37,11 @@ async function loadPrompt(filename) {
  * @param {object} params.itp     - Full ITP record from DB
  * @param {object} params.account - Account record from DB
  * @param {boolean} [params.force] - Force regeneration of stable fields too
+ * @param {string}  [params.mode]  - 'calibration' → ask for 6–8 broader queries
+ *                                    (for the sanity-check skill, target_finder_ten_leads).
+ *                                    Default (omitted) → full 15–25 query batch for production.
  */
-export async function generateQueryProfile({ itp, account, force = false }) {
+export async function generateQueryProfile({ itp, account, force = false, mode = null }) {
   const admin = getSupabaseAdmin();
 
   // Load recent previously used queries — capped at 2 runs' worth to avoid
@@ -82,6 +85,7 @@ export async function generateQueryProfile({ itp, account, force = false }) {
       location: itp.location ?? '',
     },
     ...(prior_search_queries.length > 0 ? { prior_search_queries } : {}),
+    ...(mode ? { mode } : {}),
     ...(cachedStable ? {
       existing_stable_profile: {
         buyer_descriptions:    cachedStable.buyer_descriptions,
