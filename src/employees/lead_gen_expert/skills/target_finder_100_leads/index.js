@@ -798,25 +798,56 @@ async function persistCandidate(admin, candidate, itp, accountId, autoApprove = 
  * Add enriched contacts to the active campaign and sync to Smartlead.
  * Preserves cross-campaign deduplication from the original orchestrator.
  */
-async function addContactsToCampaign(campaign_id, enrichResult, user_details_id) {
+export async function addContactsToCampaign(campaign_id, enrichResult, user_details_id) {
   if (!campaign_id || !enrichResult?.contacts?.length) return;
   const admin = getSupabaseAdmin();
 
+  // Fetch the campaign once — we need itp_id (for the approval gate),
+  // account_id (cross-campaign dedup), smartlead_campaign_id (Smartlead push).
+  const { data: campaignRow } = await admin
+    .from('campaigns')
+    .select('itp_id, account_id, smartlead_campaign_id')
+    .eq('id', campaign_id)
+    .single();
+  if (!campaignRow?.itp_id) {
+    console.warn(`[100_leads] addContactsToCampaign: campaign ${campaign_id} has no itp_id — skipping`);
+    return;
+  }
+
+  // Approval gate — only contacts whose target has an APPROVED lead in this
+  // campaign's ITP get pushed. Contacts of unapproved/rejected leads stay in
+  // the per-account contacts pool and never enter campaign_contacts until
+  // approval flips. Auto-approve (account.auto_approve_leads) marks leads
+  // approved at persist time, so this path runs as before for that case;
+  // manual approval goes through pushApprovedLeadToCampaign(lead_id).
+  const targetIds = [...new Set(enrichResult.contacts.map(c => c.target_id).filter(Boolean))];
+  if (!targetIds.length) return;
+  const { data: approvedLeads } = await admin
+    .from('leads')
+    .select('target_id')
+    .eq('itp_id', campaignRow.itp_id)
+    .eq('approved', true)
+    .in('target_id', targetIds);
+  const approvedTargetSet = new Set((approvedLeads ?? []).map(l => l.target_id));
+  const approvedContacts = enrichResult.contacts.filter(c => approvedTargetSet.has(c.target_id));
+
+  if (!approvedContacts.length) {
+    console.log(`[100_leads] addContactsToCampaign: 0 of ${enrichResult.contacts.length} contacts belong to approved leads — skipping push`);
+    return;
+  }
+
   // Filter out contacts already in this campaign
-  const incomingIds = enrichResult.contacts.map(c => c.id);
+  const incomingIds = approvedContacts.map(c => c.id);
   const { data: alreadyIn } = await admin
     .from('campaign_contacts').select('contact_id')
     .eq('campaign_id', campaign_id).in('contact_id', incomingIds);
   const alreadyInSet = new Set((alreadyIn ?? []).map(r => r.contact_id));
-  const newContacts = enrichResult.contacts.filter(c => !alreadyInSet.has(c.id));
+  const newContacts = approvedContacts.filter(c => !alreadyInSet.has(c.id));
 
   if (!newContacts.length) return;
 
   // Cross-campaign dedup: skip contacts already in another active campaign for this account
-  const { data: campaignRow } = await admin
-    .from('campaigns').select('smartlead_campaign_id, account_id').eq('id', campaign_id).single();
-
-  const crossFilteredIds = campaignRow?.account_id
+  const crossFilteredIds = campaignRow.account_id
     ? await filterContactsInActiveCampaigns({
         accountId:           campaignRow.account_id,
         currentCampaignId:   campaign_id,
