@@ -36,8 +36,8 @@ const DRY_RUN = process.env.DRY_RUN === '1';
 const PAGE_SIZE = 200;
 const CH_BASE_URL = 'https://api.company-information.service.gov.uk';
 
-// CH rate-limit: 600 req / 5 min → 1 per 200 ms for headroom
-const QUEUE_INTERVAL_MS = 220;
+// CH rate-limit: 600 req / 5 min = 2/sec max → 600ms gives comfortable headroom
+const QUEUE_INTERVAL_MS = 600;
 let queueTail = Promise.resolve();
 function enqueue(fn) {
   const result = queueTail.then(() => fn());
@@ -53,21 +53,31 @@ function getAuthHeader() {
   return 'Basic ' + Buffer.from(`${key}:`).toString('base64');
 }
 
-async function getCompanyProfile(companyNumber) {
+async function getCompanyProfile(companyNumber, retries = 3) {
   return enqueue(async () => {
-    try {
-      const res = await fetch(`${CH_BASE_URL}/company/${companyNumber}`, {
-        headers: { Authorization: getAuthHeader() },
-      });
-      if (!res.ok) {
-        console.warn(`  [CH] ${companyNumber} → HTTP ${res.status}`);
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const res = await fetch(`${CH_BASE_URL}/company/${companyNumber}`, {
+          headers: { Authorization: getAuthHeader() },
+        });
+        if (res.status === 429) {
+          const wait = 10000 * (attempt + 1); // 10s, 20s, 30s
+          console.warn(`  [CH] 429 rate limit — waiting ${wait / 1000}s…`);
+          await new Promise(r => setTimeout(r, wait));
+          continue;
+        }
+        if (!res.ok) {
+          console.warn(`  [CH] ${companyNumber} → HTTP ${res.status}`);
+          return null;
+        }
+        return await res.json();
+      } catch (err) {
+        console.warn(`  [CH] ${companyNumber} → fetch error: ${err.message}`);
         return null;
       }
-      return await res.json();
-    } catch (err) {
-      console.warn(`  [CH] ${companyNumber} → fetch error: ${err.message}`);
-      return null;
     }
+    console.warn(`  [CH] ${companyNumber} → giving up after ${retries} attempts`);
+    return null;
   });
 }
 
