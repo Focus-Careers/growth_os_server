@@ -101,14 +101,14 @@ export async function executeSkill({ user_details_id, campaign_id }) {
   // ── Step 6: Push leads (contacts) ──────────────────────────────────
   const { data: campaignContacts } = await admin
     .from('campaign_contacts')
-    .select('id, contact_id, contacts(first_name, last_name, email, role, phone, linkedin_url, target_id, targets(title, domain, company_location, industry))')
+    .select('id, contact_id, contacts(first_name, last_name, email, email_verification_status, role, phone, linkedin_url, target_id, targets(title, domain, company_location, industry))')
     .eq('campaign_id', campaign_id)
     .eq('smartlead_synced', false);
 
   if (campaignContacts?.length) {
-    // Map to Smartlead lead format
+    // Map to Smartlead lead format — exclude contacts with confirmed invalid emails
     const leads = campaignContacts
-      .filter(cc => cc.contacts?.email)
+      .filter(cc => cc.contacts?.email && cc.contacts?.email_verification_status !== 'invalid')
       .map(cc => ({
         email: cc.contacts.email,
         first_name: cc.contacts.first_name ?? '',

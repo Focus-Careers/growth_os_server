@@ -20,6 +20,7 @@ import { scrapeSite } from '../../../../lib/lead_gen/scraper.js';
 import { extractContactHypotheses } from '../../../../lib/lead_gen/contact_extractor.js';
 import { reconcileContacts } from '../../../../lib/lead_gen/contact_reconciler.js';
 import { enrichCompany, searchPeopleAtCompany, revealPerson } from '../../../../config/apollo.js';
+import { verifyEmail } from '../../../../config/millionverifier.js';
 import { increment } from '../../../../lib/cost_tracker.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 
@@ -278,6 +279,25 @@ export async function executeSkill({
 
     const emailNorm = contact.email.toLowerCase();
 
+    // Derive legacy source enum from provenance (for backwards compat with old queries)
+    const sources = (contact.provenance ?? []).map(p => p.source);
+    let source = 'website_scrape';
+    if (sources.includes('apollo_reveal'))                                        source = 'apollo_reveal';
+    else if (sources.includes('apollo_search') && !sources.includes('website'))   source = 'apollo_search';
+    else if (sources.includes('companies_house') && !sources.includes('website')) source = 'companies_house';
+    else if (sources.includes('website'))                                          source = 'website_scrape';
+
+    // Verify email deliverability — skip for Apollo reveals (already verified by Apollo)
+    let emailVerificationStatus = null;
+    if (source !== 'apollo_reveal') {
+      const verification = await verifyEmail(emailNorm);
+      emailVerificationStatus = verification.status;
+      if (emailVerificationStatus === 'invalid') {
+        console.log(`[enrich_target] Skipping invalid email (MillionVerifier): ${emailNorm}`);
+        continue;
+      }
+    }
+
     // Check if we're updating an existing CH officer row
     const chMatch = (chOfficers ?? []).find(o =>
       o.first_name?.toLowerCase() === contact.first_name?.toLowerCase() &&
@@ -296,6 +316,7 @@ export async function executeSkill({
         provenance: contact.provenance ?? null,
         seniority_score: contact.seniority_score ?? null,
         role_relevance_score: contact.role_relevance_score ?? null,
+        email_verification_status: emailVerificationStatus,
       }).eq('id', chMatch.id).select().single();
       if (updated) {
         savedContacts.push(updated);
@@ -309,14 +330,6 @@ export async function executeSkill({
       .select('id').eq('target_id', target_id).eq('email', emailNorm).maybeSingle();
     if (existing) continue;
 
-    // Derive legacy source enum from provenance (for backwards compat with old queries)
-    const sources = (contact.provenance ?? []).map(p => p.source);
-    let source = 'website_scrape';
-    if (sources.includes('apollo_reveal'))                             source = 'apollo_reveal';
-    else if (sources.includes('apollo_search') && !sources.includes('website')) source = 'apollo_search';
-    else if (sources.includes('companies_house') && !sources.includes('website')) source = 'companies_house';
-    else if (sources.includes('website'))                              source = 'website_scrape';
-
     const { data: inserted, error } = await admin.from('contacts').insert({
       target_id,
       account_id,
@@ -327,17 +340,18 @@ export async function executeSkill({
       phone:      contact.phone      ?? null,
       linkedin_url: contact.linkedin ?? null,
       source,
-      confidence_label:    contact.confidence_label    ?? null,
-      provenance:          contact.provenance          ?? null,
-      seniority_score:     contact.seniority_score     ?? null,
-      role_relevance_score: contact.role_relevance_score ?? null,
+      confidence_label:         contact.confidence_label    ?? null,
+      provenance:               contact.provenance          ?? null,
+      seniority_score:          contact.seniority_score     ?? null,
+      role_relevance_score:     contact.role_relevance_score ?? null,
+      email_verification_status: emailVerificationStatus,
     }).select().single();
 
     if (error) {
       console.error(`[enrich_target] Insert error for ${emailNorm}:`, error.message);
     } else {
       savedContacts.push(inserted);
-      console.log(`[enrich_target] Saved: ${contact.first_name ?? '?'} ${contact.last_name ?? '?'} <${emailNorm}> [${source}]`);
+      console.log(`[enrich_target] Saved: ${contact.first_name ?? '?'} ${contact.last_name ?? '?'} <${emailNorm}> [${source}] [${emailVerificationStatus ?? 'apollo_trusted'}]`);
     }
   }
 
@@ -347,6 +361,14 @@ export async function executeSkill({
   for (const channel of fallback_channels) {
     if (savedContacts.length >= MAX_CONTACTS_PER_COMPANY) break;
     if (!channel.email || isDummyEmail(channel.email)) continue;
+
+    // Verify fallback/generic mailboxes — catch-all is common here, flag but keep
+    const verification = await verifyEmail(channel.email);
+    if (verification.status === 'invalid') {
+      console.log(`[enrich_target] Skipping invalid fallback email (MillionVerifier): ${channel.email}`);
+      continue;
+    }
+
     const { data: existing } = await admin.from('contacts')
       .select('id').eq('target_id', target_id).eq('email', channel.email).maybeSingle();
     if (!existing) {
@@ -356,10 +378,11 @@ export async function executeSkill({
         email: channel.email,
         source: 'website_html',
         confidence_label: 'generic_mailbox',
+        email_verification_status: verification.status,
       }).select().single();
       if (inserted) {
         savedContacts.push(inserted);
-        console.log(`[enrich_target] Saved fallback: <${channel.email}>`);
+        console.log(`[enrich_target] Saved fallback: <${channel.email}> [${verification.status ?? 'unknown'}]`);
       }
     }
   }
