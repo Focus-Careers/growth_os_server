@@ -78,7 +78,7 @@ router.post('/', async (req, res) => {
     const category = payload.new_category ?? payload.reply_category ?? payload.category ?? null;
 
     if (!leadEmail || !slCampaignId) {
-      console.log(`[smartlead-webhook] Missing lead email or campaign_id`);
+      console.log(`[smartlead-webhook] Missing lead email or campaign_id — raw payload:`, JSON.stringify(payload, null, 2));
       return;
     }
 
