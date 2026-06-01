@@ -70,10 +70,12 @@ router.post('/', async (req, res) => {
   try {
     const payload = req.body;
     const event = payload.event_type ?? payload.event ?? payload.type;
-    const leadEmail = payload.lead?.email ?? payload.lead_email;
-    const slCampaignId = String(payload.campaign_id);
+    // Smartlead sends lead email as to_email at the top level, but older/alternate
+    // formats nest it under lead.email or use lead_email directly
+    const leadEmail = payload.to_email ?? payload.lead?.email ?? payload.lead_email;
+    const slCampaignId = payload.campaign_id ? String(payload.campaign_id) : null;
     // Reply body can come in multiple formats
-    const replyBody = payload.reply?.body ?? payload.reply_body ?? payload.message ?? null;
+    const replyBody = payload.reply_body ?? payload.reply?.body ?? payload.message ?? null;
     // Category can come in multiple formats
     const category = payload.new_category ?? payload.reply_category ?? payload.category ?? null;
 
@@ -167,7 +169,7 @@ router.post('/', async (req, res) => {
     // Broadcast to frontend
     const userDetailsId = await getUserForCampaign(campaign.id);
     if (userDetailsId) {
-      const leadName = `${payload.lead?.first_name ?? ''} ${payload.lead?.last_name ?? ''}`.trim();
+      const leadName = payload.to_name ?? `${payload.lead?.first_name ?? ''} ${payload.lead?.last_name ?? ''}`.trim();
 
       await broadcastContactUpdate(userDetailsId, {
         campaign_id: campaign.id,
