@@ -133,7 +133,11 @@ router.post('/', async (req, res) => {
 
     // Build update fields
     const updateFields = { status: newStatus };
-    if (newStatus === 'sent') updateFields.sent_at = payload.timestamp ?? new Date().toISOString();
+    if (newStatus === 'sent') {
+      updateFields.sent_at = payload.timestamp ?? new Date().toISOString();
+      // Track which sequence step this lead is on
+      if (payload.sequence_number) updateFields.current_sequence = payload.sequence_number;
+    }
     if (newStatus === 'opened') updateFields.opened_at = payload.timestamp ?? new Date().toISOString();
     if (newStatus === 'replied') {
       updateFields.replied_at = payload.timestamp ?? new Date().toISOString();
@@ -179,6 +183,7 @@ router.post('/', async (req, res) => {
         classification,
         lead_email: leadEmail,
         lead_name: leadName,
+        current_sequence: payload.sequence_number ?? null,
       });
 
       // Notify Watson for positive replies only
