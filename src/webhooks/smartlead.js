@@ -132,15 +132,18 @@ router.post('/', async (req, res) => {
     }
 
     // Build update fields
+    // Smartlead uses event-specific timestamp fields, not a generic 'timestamp'
+    const eventTime = payload.time_sent ?? payload.time_opened ?? payload.time_replied
+      ?? payload.timestamp ?? new Date().toISOString();
+
     const updateFields = { status: newStatus };
     if (newStatus === 'sent') {
-      updateFields.sent_at = payload.timestamp ?? new Date().toISOString();
-      // Track which sequence step this lead is on
+      updateFields.sent_at = eventTime;
       if (payload.sequence_number) updateFields.current_sequence = payload.sequence_number;
     }
-    if (newStatus === 'opened') updateFields.opened_at = payload.timestamp ?? new Date().toISOString();
+    if (newStatus === 'opened') updateFields.opened_at = eventTime;
     if (newStatus === 'replied') {
-      updateFields.replied_at = payload.timestamp ?? new Date().toISOString();
+      updateFields.replied_at = eventTime;
       if (replyBody) updateFields.reply_body = replyBody;
     }
 
