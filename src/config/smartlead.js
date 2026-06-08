@@ -174,10 +174,11 @@ export async function updateEmailAccount(emailAccountId, { from_name, smtp_passw
  * Attach an email account to a campaign.
  */
 export async function attachEmailAccount(campaignId, emailAccountId) {
-  console.log(`[smartlead] Attaching email account ${emailAccountId} to campaign ${campaignId}`);
+  const ids = Array.isArray(emailAccountId) ? emailAccountId : [emailAccountId];
+  console.log(`[smartlead] Attaching email accounts ${ids.join(',')} to campaign ${campaignId}`);
   const { ok, data } = await smartleadFetch(`/campaigns/${campaignId}/email-accounts`, {
     method: 'POST',
-    body: JSON.stringify({ email_account_ids: [emailAccountId] }),
+    body: JSON.stringify({ email_account_ids: ids }),
   });
   console.log(`[smartlead] Attach response:`, JSON.stringify(data));
   return ok ? data : null;

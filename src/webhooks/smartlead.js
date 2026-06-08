@@ -161,6 +161,26 @@ router.post('/', async (req, res) => {
 
     console.log(`[smartlead-webhook] Updated ${leadEmail} → ${newStatus}`);
 
+    // Mirror unsubscribes/bounces into account suppression_list
+    if (newStatus === 'unsubscribed' || newStatus === 'bounced') {
+      const { data: campaignAccount } = await getSupabaseAdmin()
+        .from('campaigns').select('account_id').eq('id', campaign.id).single();
+      if (campaignAccount?.account_id) {
+        const reason = newStatus === 'unsubscribed' ? 'unsubscribed' : 'bounced';
+        await getSupabaseAdmin()
+          .from('suppression_list')
+          .upsert(
+            {
+              account_id: campaignAccount.account_id,
+              email: leadEmail.toLowerCase(),
+              reason,
+              source: 'smartlead_webhook',
+            },
+            { onConflict: 'account_id,email' },
+          );
+      }
+    }
+
     // Classify replies
     let classification = null;
     if (newStatus === 'replied' && replyBody) {

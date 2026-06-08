@@ -9,7 +9,8 @@ import {
   addLeads,
   registerCampaignWebhook,
 } from '../../../../config/smartlead.js';
-import { resolveSmartleadSender } from '../../helpers/resolve_smartlead_sender.js';
+import { resolveCampaignSenders } from '../../helpers/resolve_campaign_senders.js';
+import { estimateCapacity } from '../../../../utils/warmup_capacity.js';
 
 export async function executeSkill({ user_details_id, campaign_id }) {
   const admin = getSupabaseAdmin();
@@ -67,8 +68,17 @@ export async function executeSkill({ user_details_id, campaign_id }) {
 
   await saveSequences(slCampaignId, sequences);
 
-  // ── Step 3: Set schedule ───────────────────────────────────────────
-  await setSchedule(slCampaignId, campaign.schedule ?? {});
+  // ── Step 3: Set schedule (auto-scale daily cap by sender count + warmup) ──
+  const { senders: resolvedSenders, slEmailAccountIds } = await resolveCampaignSenders(campaign_id);
+  const totalDailyCapacity = resolvedSenders.reduce(
+    (sum, r) => sum + estimateCapacity(r.sender?.warmup_started_at),
+    0,
+  );
+  const scaledSchedule = {
+    ...(campaign.schedule ?? {}),
+    max_new_leads_per_day: totalDailyCapacity > 0 ? totalDailyCapacity : (campaign.schedule?.max_new_leads_per_day ?? 50),
+  };
+  await setSchedule(slCampaignId, scaledSchedule);
 
   // ── Step 4: Configure settings ─────────────────────────────────────
   await setCampaignSettings(slCampaignId);
@@ -81,21 +91,23 @@ export async function executeSkill({ user_details_id, campaign_id }) {
     console.warn('[sync_to_smartlead] WEBHOOK_BASE_URL not set, skipping webhook registration');
   }
 
-  // ── Step 5: Attach email account ───────────────────────────────────
+  // ── Step 5: Attach email accounts (multi-sender) ──────────────────
   let senderOk = false;
   let senderError = null;
-  if (campaign.sender_id) {
-    const { slEmailAccountId, sender } = await resolveSmartleadSender(campaign.sender_id);
-    if (slEmailAccountId) {
-      await attachEmailAccount(slCampaignId, parseInt(slEmailAccountId));
-      senderOk = true;
-    } else {
-      senderError = sender?.verification_error ?? 'Could not connect email account to Smartlead';
-      console.warn(`[sync_to_smartlead] Sender failed to attach for campaign ${campaign_id}: ${senderError}`);
+  if (slEmailAccountIds.length > 0) {
+    await attachEmailAccount(slCampaignId, slEmailAccountIds);
+    senderOk = true;
+    const failed = resolvedSenders.filter(r => !r.slEmailAccountId);
+    if (failed.length) {
+      senderError = `${failed.length}/${resolvedSenders.length} senders failed to attach: ${failed.map(f => f.error).join('; ')}`;
+      console.warn(`[sync_to_smartlead] Partial sender attach for campaign ${campaign_id}: ${senderError}`);
     }
+  } else if (resolvedSenders.length > 0) {
+    senderError = resolvedSenders.map(r => r.error).filter(Boolean).join('; ') || 'No senders resolved to Smartlead accounts';
+    console.warn(`[sync_to_smartlead] No senders attached for campaign ${campaign_id}: ${senderError}`);
   } else {
-    console.log('[sync_to_smartlead] No sender_id on campaign, skipping email account setup');
-    senderError = 'No sender configured on this campaign';
+    console.log('[sync_to_smartlead] No senders on campaign, skipping email account setup');
+    senderError = 'No senders configured on this campaign';
   }
 
   // ── Step 6: Push leads (contacts) ──────────────────────────────────
@@ -106,9 +118,18 @@ export async function executeSkill({ user_details_id, campaign_id }) {
     .eq('smartlead_synced', false);
 
   if (campaignContacts?.length) {
-    // Map to Smartlead lead format — exclude contacts with confirmed invalid emails
+    // Pre-send suppression filter — drop anything on this account's suppression_list
+    const { data: suppressed } = await admin
+      .from('suppression_list')
+      .select('email')
+      .eq('account_id', campaign.account_id);
+    const suppressedSet = new Set((suppressed ?? []).map(s => (s.email ?? '').toLowerCase()));
+
+    // Map to Smartlead lead format — exclude invalid + suppressed
     const leads = campaignContacts
-      .filter(cc => cc.contacts?.email && cc.contacts?.email_verification_status !== 'invalid')
+      .filter(cc => cc.contacts?.email
+        && cc.contacts?.email_verification_status !== 'invalid'
+        && !suppressedSet.has(cc.contacts.email.toLowerCase()))
       .map(cc => ({
         email: cc.contacts.email,
         first_name: cc.contacts.first_name ?? '',

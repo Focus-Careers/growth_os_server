@@ -12,7 +12,9 @@ import itpRouter from './itp/router.js';
 import adminRouter from './admin/router.js';
 import sendersRouter from './senders/router.js';
 import leadsRouter from './leads/router.js';
+import provisioningRouter from './provisioning/router.js';
 import { init as initCronService } from './admin/cronService.js';
+import { initProvisioningPoller } from './provisioning/poller.js';
 
 dotenv.config();
 
@@ -47,10 +49,12 @@ app.use('/api/itp', itpRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/senders', sendersRouter);
 app.use('/api/leads', leadsRouter);
+app.use('/api/provisioning', provisioningRouter);
 
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
   initCronService().catch(err => console.error('[cronService] init error:', err));
+  initProvisioningPoller();
 });
 
 process.on('unhandledRejection', (reason) => {

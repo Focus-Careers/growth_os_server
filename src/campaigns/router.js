@@ -2,8 +2,10 @@ import express from 'express';
 import { getSupabaseAdmin } from '../config/supabase.js';
 import { attachEmailAccount, updateCampaignStatus, saveSequences } from '../config/smartlead.js';
 import { resolveSmartleadSender } from '../employees/email_campaign_manager/helpers/resolve_smartlead_sender.js';
+import { resolveCampaignSenders } from '../employees/email_campaign_manager/helpers/resolve_campaign_senders.js';
 import { dispatchSkill } from '../employees/index.js';
 import { fixSequenceDelays } from '../utils/sequence.js';
+import { estimateCapacity } from '../utils/warmup_capacity.js';
 
 const router = express.Router();
 
@@ -20,7 +22,7 @@ router.post('/update-sender', async (req, res) => {
   const admin = getSupabaseAdmin();
 
   try {
-    // Update sender_id in our DB
+    // Update sender_id in our DB (legacy field — keep for back-compat)
     const { error: updateError } = await admin
       .from('campaigns')
       .update({ sender_id })
@@ -29,6 +31,10 @@ router.post('/update-sender', async (req, res) => {
     if (updateError) {
       return res.status(500).json({ error: 'Failed to update campaign sender', detail: updateError.message });
     }
+
+    // Mirror into campaign_senders junction
+    await admin.from('campaign_senders').delete().eq('campaign_id', campaign_id);
+    await admin.from('campaign_senders').insert({ campaign_id, sender_id });
 
     // Check if campaign is synced to Smartlead
     const { data: campaign } = await admin
@@ -150,6 +156,86 @@ router.post('/update', async (req, res) => {
     console.error('[update] Error:', err);
     res.status(500).json({ error: 'Internal error', detail: err.message });
   }
+});
+
+/**
+ * GET /api/campaigns/:campaignId/senders
+ * Return the senders attached to a campaign (via junction table), with capacity info.
+ */
+router.get('/:campaignId/senders', async (req, res) => {
+  const { campaignId } = req.params;
+  const admin = getSupabaseAdmin();
+
+  const { data: rows, error } = await admin
+    .from('campaign_senders')
+    .select('sender_id, senders(id, email, display_name, verified, warmup_started_at, connection_type, verification_error)')
+    .eq('campaign_id', campaignId);
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  const senders = (rows ?? [])
+    .map(r => r.senders)
+    .filter(Boolean)
+    .map(s => ({ ...s, daily_capacity: estimateCapacity(s.warmup_started_at) }));
+
+  const totalCapacity = senders.reduce((sum, s) => sum + s.daily_capacity, 0);
+  res.json({ senders, total_daily_capacity: totalCapacity });
+});
+
+/**
+ * POST /api/campaigns/:campaignId/senders  { sender_id }
+ * Attach a sender to a campaign; re-attach to Smartlead if already synced.
+ */
+router.post('/:campaignId/senders', async (req, res) => {
+  const { campaignId } = req.params;
+  const { sender_id } = req.body ?? {};
+  if (!sender_id) return res.status(400).json({ error: 'sender_id required' });
+
+  const admin = getSupabaseAdmin();
+
+  const { error: insertErr } = await admin
+    .from('campaign_senders')
+    .upsert({ campaign_id: campaignId, sender_id }, { onConflict: 'campaign_id,sender_id' });
+  if (insertErr) return res.status(500).json({ error: insertErr.message });
+
+  // Re-attach all senders to Smartlead if campaign is synced
+  const { data: campaign } = await admin
+    .from('campaigns').select('smartlead_campaign_id').eq('id', campaignId).single();
+  if (campaign?.smartlead_campaign_id && campaign.smartlead_campaign_id !== 'syncing') {
+    const { slEmailAccountIds } = await resolveCampaignSenders(campaignId);
+    if (slEmailAccountIds.length > 0) {
+      await attachEmailAccount(parseInt(campaign.smartlead_campaign_id), slEmailAccountIds);
+    }
+  }
+
+  res.json({ success: true });
+});
+
+/**
+ * DELETE /api/campaigns/:campaignId/senders/:senderId
+ */
+router.delete('/:campaignId/senders/:senderId', async (req, res) => {
+  const { campaignId, senderId } = req.params;
+  const admin = getSupabaseAdmin();
+
+  const { error } = await admin
+    .from('campaign_senders')
+    .delete()
+    .eq('campaign_id', campaignId)
+    .eq('sender_id', senderId);
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Re-attach remaining senders in Smartlead
+  const { data: campaign } = await admin
+    .from('campaigns').select('smartlead_campaign_id').eq('id', campaignId).single();
+  if (campaign?.smartlead_campaign_id && campaign.smartlead_campaign_id !== 'syncing') {
+    const { slEmailAccountIds } = await resolveCampaignSenders(campaignId);
+    if (slEmailAccountIds.length > 0) {
+      await attachEmailAccount(parseInt(campaign.smartlead_campaign_id), slEmailAccountIds);
+    }
+  }
+
+  res.json({ success: true });
 });
 
 /**
