@@ -5,6 +5,11 @@ import { sendAppMessage } from '../intelligence/app_message_sender/index.js';
 
 const router = Router();
 
+// Status rank: higher number = more advanced state; never regress to a lower status.
+// Exception: bounced/unsubscribed always override (terminal states from Smartlead).
+const STATUS_RANK = { sent: 1, opened: 2, replied: 3 };
+const TERMINAL_STATUSES = new Set(['bounced', 'unsubscribed', 'failed']);
+
 // Smartlead uses inconsistent event names across API versions — handle all variants
 const EVENT_TO_STATUS = {
   'EMAIL_SENT': 'sent',
@@ -78,6 +83,8 @@ router.post('/', async (req, res) => {
     const replyBody = payload.reply_body ?? payload.reply?.body ?? payload.message ?? null;
     // Category can come in multiple formats
     const category = payload.new_category ?? payload.reply_category ?? payload.category ?? null;
+    // Sequence number — Smartlead has used several field names across API versions
+    const sequenceNumber = payload.sequence_number ?? payload.seq_number ?? payload.email_number ?? payload.step_number ?? null;
 
     if (!leadEmail || !slCampaignId) {
       console.log(`[smartlead-webhook] Missing lead email or campaign_id — raw payload:`, JSON.stringify(payload, null, 2));
@@ -131,15 +138,48 @@ router.post('/', async (req, res) => {
       return;
     }
 
-    // Build update fields
     // Smartlead uses event-specific timestamp fields, not a generic 'timestamp'
     const eventTime = payload.time_sent ?? payload.time_opened ?? payload.time_replied
       ?? payload.timestamp ?? new Date().toISOString();
 
-    const updateFields = { status: newStatus };
+    // Log every individual email event so we can count total sends across sequences
+    await getSupabaseAdmin()
+      .from('campaign_contact_events')
+      .insert({
+        campaign_id: campaign.id,
+        contact_id: contact.id,
+        event_type: newStatus,
+        sequence_number: sequenceNumber ?? null,
+        event_at: eventTime,
+      });
+
+    // Fetch current status to prevent regression (e.g. don't overwrite 'opened' with 'sent'
+    // when a follow-up sequence email is sent to a lead who already opened the first).
+    const { data: current } = await getSupabaseAdmin()
+      .from('campaign_contacts')
+      .select('status, sent_at')
+      .eq('campaign_id', campaign.id)
+      .eq('contact_id', contact.id)
+      .single();
+
+    const currentRank = STATUS_RANK[current?.status] ?? 0;
+    const newRank = STATUS_RANK[newStatus] ?? 0;
+    const isTerminal = TERMINAL_STATUSES.has(newStatus);
+
+    // Build update fields
+    const updateFields = {};
+
+    // Only update status if it's a promotion, or a terminal state (bounced/unsubscribed)
+    if (isTerminal || newRank >= currentRank) {
+      updateFields.status = newStatus;
+    }
+
     if (newStatus === 'sent') {
-      updateFields.sent_at = eventTime;
-      if (payload.sequence_number) updateFields.current_sequence = payload.sequence_number;
+      // Only set sent_at on the very first send; subsequent sequences preserve the original
+      if (!current?.sent_at) updateFields.sent_at = eventTime;
+      // Always update current_sequence — even if status doesn't change (e.g. seq2 sent to
+      // a lead that was already 'opened'), so the dot count stays accurate
+      if (sequenceNumber != null) updateFields.current_sequence = sequenceNumber;
     }
     if (newStatus === 'opened') updateFields.opened_at = eventTime;
     if (newStatus === 'replied') {
@@ -147,19 +187,21 @@ router.post('/', async (req, res) => {
       if (replyBody) updateFields.reply_body = replyBody;
     }
 
-    // Update DB
-    const { error } = await getSupabaseAdmin()
-      .from('campaign_contacts')
-      .update(updateFields)
-      .eq('campaign_id', campaign.id)
-      .eq('contact_id', contact.id);
+    // Only hit the DB if there's something to update
+    if (Object.keys(updateFields).length > 0) {
+      const { error } = await getSupabaseAdmin()
+        .from('campaign_contacts')
+        .update(updateFields)
+        .eq('campaign_id', campaign.id)
+        .eq('contact_id', contact.id);
 
-    if (error) {
-      console.error(`[smartlead-webhook] Update error:`, error.message);
-      return;
+      if (error) {
+        console.error(`[smartlead-webhook] Update error:`, error.message);
+        return;
+      }
     }
 
-    console.log(`[smartlead-webhook] Updated ${leadEmail} → ${newStatus}`);
+    console.log(`[smartlead-webhook] Updated ${leadEmail} → ${newStatus} (seq ${sequenceNumber ?? '?'}, was ${current?.status ?? 'null'})`);
 
     // Classify replies
     let classification = null;
@@ -186,7 +228,7 @@ router.post('/', async (req, res) => {
         classification,
         lead_email: leadEmail,
         lead_name: leadName,
-        current_sequence: payload.sequence_number ?? null,
+        current_sequence: sequenceNumber ?? null,
       });
 
       // Notify Watson for positive replies only
