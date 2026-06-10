@@ -157,7 +157,7 @@ router.post('/', async (req, res) => {
     // when a follow-up sequence email is sent to a lead who already opened the first).
     const { data: current } = await getSupabaseAdmin()
       .from('campaign_contacts')
-      .select('status, sent_at')
+      .select('status, sent_at, current_sequence')
       .eq('campaign_id', campaign.id)
       .eq('contact_id', contact.id)
       .single();
@@ -177,9 +177,11 @@ router.post('/', async (req, res) => {
     if (newStatus === 'sent') {
       // Only set sent_at on the very first send; subsequent sequences preserve the original
       if (!current?.sent_at) updateFields.sent_at = eventTime;
-      // Always update current_sequence — even if status doesn't change (e.g. seq2 sent to
-      // a lead that was already 'opened'), so the dot count stays accurate
-      if (sequenceNumber != null) updateFields.current_sequence = sequenceNumber;
+    }
+    // Update current_sequence on any event where sequence is advancing — Smartlead only
+    // fires EMAIL_SENT for the first email; follow-up sends show up via open/reply events
+    if (sequenceNumber != null && sequenceNumber > (current?.current_sequence ?? 0)) {
+      updateFields.current_sequence = sequenceNumber;
     }
     if (newStatus === 'opened') updateFields.opened_at = eventTime;
     if (newStatus === 'replied') {
