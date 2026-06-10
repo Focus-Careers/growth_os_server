@@ -11,6 +11,7 @@ import {
   attachEmailAccount,
   addLeads,
   registerCampaignWebhook,
+  getWebhooksForCampaign,
   updateCampaignStatus,
   getCampaigns as slGetCampaigns,
 } from '../config/smartlead.js';
@@ -848,6 +849,43 @@ router.patch('/users/:auth_id/super-admin', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
   res.json({ auth_id, is_super_admin });
+});
+
+// POST /api/admin/reregister-webhooks
+// Re-registers Smartlead webhooks for all campaigns (or a single one via body.campaign_id).
+// Use when the existing webhook registration is stale or was created with wrong event_types.
+router.post('/reregister-webhooks', async (req, res) => {
+  const supabase = await requireSuperAdmin(req, res);
+  if (!supabase) return;
+
+  if (!process.env.WEBHOOK_BASE_URL) {
+    return res.status(500).json({ error: 'WEBHOOK_BASE_URL not set' });
+  }
+
+  const webhookUrl = `${process.env.WEBHOOK_BASE_URL}/api/webhooks/smartlead`;
+  const { campaign_id } = req.body;
+
+  const query = supabase
+    .from('campaigns')
+    .select('id, name, smartlead_campaign_id')
+    .not('smartlead_campaign_id', 'is', null);
+  if (campaign_id) query.eq('id', campaign_id);
+
+  const { data: campaigns, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+
+  const results = [];
+  for (const c of campaigns ?? []) {
+    try {
+      const existing = await getWebhooksForCampaign(c.smartlead_campaign_id);
+      const result = await registerCampaignWebhook(c.smartlead_campaign_id, webhookUrl);
+      results.push({ campaign: c.name, sl_id: c.smartlead_campaign_id, previous: existing, result });
+    } catch (err) {
+      results.push({ campaign: c.name, sl_id: c.smartlead_campaign_id, error: err.message });
+    }
+  }
+
+  res.json({ reregistered: results.length, results });
 });
 
 export default router;

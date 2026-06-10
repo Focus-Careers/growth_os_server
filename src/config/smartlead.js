@@ -233,25 +233,41 @@ export async function getCampaignStatistics(campaignId) {
  * Register a webhook URL for a specific campaign.
  * Uses the working endpoint from maid-server: POST /webhook/create
  */
+export async function getWebhooksForCampaign(campaignId) {
+  const { ok, data } = await smartleadFetch(`/campaigns/${campaignId}/webhooks`);
+  if (!ok) return null;
+  return data;
+}
+
 export async function registerCampaignWebhook(campaignId, webhookUrl) {
   console.log(`[smartlead] Registering webhook for campaign ${campaignId}: ${webhookUrl}`);
-  const { ok, data } = await smartleadFetch('/webhook/create', {
+
+  // Delete any existing GrowthOS webhooks for this campaign first to avoid duplicates
+  const existing = await getWebhooksForCampaign(campaignId);
+  if (Array.isArray(existing)) {
+    for (const wh of existing) {
+      if (wh.webhook_url === webhookUrl || wh.name?.startsWith('growthOS')) {
+        await smartleadFetch(`/webhooks/${wh.id}`, { method: 'DELETE' });
+        console.log(`[smartlead] Deleted stale webhook ${wh.id} for campaign ${campaignId}`);
+      }
+    }
+  }
+
+  const { ok, data } = await smartleadFetch(`/campaigns/${campaignId}/webhooks`, {
     method: 'POST',
     body: JSON.stringify({
       name: `growthOS-webhook-${campaignId}`,
       webhook_url: webhookUrl,
-      email_campaign_id: campaignId,
-      association_type: 3,
-      event_type_map: {
-        EMAIL_SENT: true,
-        FIRST_EMAIL_SENT: true,
-        EMAIL_OPEN: true,
-        EMAIL_LINK_CLICK: true,
-        EMAIL_REPLY: true,
-        LEAD_UNSUBSCRIBED: true,
-        LEAD_CATEGORY_UPDATED: true,
-        EMAIL_BOUNCE: true,
-      },
+      event_types: [
+        'EMAIL_SENT',
+        'FIRST_EMAIL_SENT',
+        'EMAIL_OPEN',
+        'EMAIL_LINK_CLICK',
+        'EMAIL_REPLY',
+        'LEAD_UNSUBSCRIBED',
+        'LEAD_CATEGORY_UPDATED',
+        'EMAIL_BOUNCE',
+      ],
     }),
   });
   if (!ok) {
