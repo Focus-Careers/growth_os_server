@@ -255,8 +255,7 @@ export async function getCampaignStatistics(campaignId) {
 }
 
 /**
- * Register a webhook URL for a specific campaign.
- * Uses the working endpoint from maid-server: POST /webhook/create
+ * Fetch the webhooks registered for a campaign.
  */
 export async function getWebhooksForCampaign(campaignId) {
   const { ok, data } = await smartleadFetch(`/campaigns/${campaignId}/webhooks`);
@@ -272,7 +271,7 @@ export async function registerCampaignWebhook(campaignId, webhookUrl) {
   if (Array.isArray(existing)) {
     for (const wh of existing) {
       if (wh.webhook_url === webhookUrl || wh.name?.startsWith('growthOS')) {
-        await smartleadFetch(`/webhooks/${wh.id}`, { method: 'DELETE' });
+        await smartleadFetch(`/campaigns/${campaignId}/webhooks/${wh.id}`, { method: 'DELETE' });
         console.log(`[smartlead] Deleted stale webhook ${wh.id} for campaign ${campaignId}`);
       }
     }
