@@ -7,24 +7,36 @@ const jobs = new Map(); // cronId -> node-cron task
 
 // Smartlead doesn't fire EMAIL_SENT webhooks for follow-up sends, so we poll the
 // statistics API on a fixed schedule to keep send counts + sequence progress accurate.
-const RECONCILE_CRON = '0 */8 * * *'; // every 8 hours
+const RECONCILE_CRON = '0 * * * *'; // every hour, on the hour
+
+let reconcileRunning = false;
 
 export async function reconcileAllCampaigns() {
-  const supabase = getSupabaseAdmin();
-  const { data: campaigns } = await supabase
-    .from('campaigns')
-    .select('id')
-    .not('smartlead_campaign_id', 'is', null);
+  // Skip if a previous sweep is still running (avoids overlapping runs at short intervals)
+  if (reconcileRunning) {
+    console.log('[cronService] Reconcile sweep already running — skipping this tick');
+    return;
+  }
+  reconcileRunning = true;
+  try {
+    const supabase = getSupabaseAdmin();
+    const { data: campaigns } = await supabase
+      .from('campaigns')
+      .select('id')
+      .not('smartlead_campaign_id', 'is', null);
 
-  console.log(`[cronService] Reconciling sends for ${(campaigns ?? []).length} campaign(s)`);
-  for (const c of campaigns ?? []) {
-    try {
-      await reconcileCampaignSends(c.id);
-    } catch (err) {
-      console.error(`[cronService] reconcile error for ${c.id}:`, err.message);
+    console.log(`[cronService] Reconciling sends for ${(campaigns ?? []).length} campaign(s)`);
+    for (const c of campaigns ?? []) {
+      try {
+        await reconcileCampaignSends(c.id);
+      } catch (err) {
+        console.error(`[cronService] reconcile error for ${c.id}:`, err.message);
+      }
+      // Space out calls to stay under Smartlead's rate limit
+      await new Promise(resolve => setTimeout(resolve, 1500));
     }
-    // Space out calls to stay under Smartlead's rate limit
-    await new Promise(resolve => setTimeout(resolve, 1500));
+  } finally {
+    reconcileRunning = false;
   }
 }
 
