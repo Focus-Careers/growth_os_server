@@ -1,8 +1,32 @@
 import cron from 'node-cron';
 import { getSupabaseAdmin } from '../config/supabase.js';
 import { dispatchSkill } from '../employees/index.js';
+import { reconcileCampaignSends } from '../lib/smartlead/reconcile_sends.js';
 
 const jobs = new Map(); // cronId -> node-cron task
+
+// Smartlead doesn't fire EMAIL_SENT webhooks for follow-up sends, so we poll the
+// statistics API on a fixed schedule to keep send counts + sequence progress accurate.
+const RECONCILE_CRON = '0 */8 * * *'; // every 8 hours
+
+export async function reconcileAllCampaigns() {
+  const supabase = getSupabaseAdmin();
+  const { data: campaigns } = await supabase
+    .from('campaigns')
+    .select('id')
+    .not('smartlead_campaign_id', 'is', null);
+
+  console.log(`[cronService] Reconciling sends for ${(campaigns ?? []).length} campaign(s)`);
+  for (const c of campaigns ?? []) {
+    try {
+      await reconcileCampaignSends(c.id);
+    } catch (err) {
+      console.error(`[cronService] reconcile error for ${c.id}:`, err.message);
+    }
+    // Space out calls to stay under Smartlead's rate limit
+    await new Promise(resolve => setTimeout(resolve, 1500));
+  }
+}
 
 async function runCampaigns(cronId, campaignIds) {
   console.log(`[cronService] Job fired: cron ${cronId}, campaigns: ${campaignIds.join(', ')}`);
@@ -45,6 +69,12 @@ export async function init() {
     .from('target_finder_crons').select('*').eq('active', true);
   (crons || []).forEach(scheduleJob);
   console.log(`[cronService] Loaded ${(crons || []).length} cron job(s)`);
+
+  // Fixed schedule: poll Smartlead stats to reconcile send counts (webhooks miss follow-ups)
+  cron.schedule(RECONCILE_CRON, () => {
+    reconcileAllCampaigns().catch(err => console.error('[cronService] reconcile sweep error:', err));
+  });
+  console.log(`[cronService] Scheduled send reconciliation: ${RECONCILE_CRON}`);
 }
 
 export function addJob(cronRow) {

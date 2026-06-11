@@ -142,8 +142,10 @@ router.post('/', async (req, res) => {
     const eventTime = payload.time_sent ?? payload.time_opened ?? payload.time_replied
       ?? payload.timestamp ?? new Date().toISOString();
 
-    // Log every individual email event so we can count total sends across sequences
-    await getSupabaseAdmin()
+    // Log every individual email event so we can count total sends across sequences.
+    // A unique index dedups 'sent' rows by (campaign, contact, sequence); ignore the
+    // resulting duplicate-key error (23505) when the stats poller already recorded it.
+    const { error: eventErr } = await getSupabaseAdmin()
       .from('campaign_contact_events')
       .insert({
         campaign_id: campaign.id,
@@ -152,6 +154,9 @@ router.post('/', async (req, res) => {
         sequence_number: sequenceNumber ?? null,
         event_at: eventTime,
       });
+    if (eventErr && eventErr.code !== '23505') {
+      console.warn(`[smartlead-webhook] Event log error:`, eventErr.message);
+    }
 
     // Fetch current status to prevent regression (e.g. don't overwrite 'opened' with 'sent'
     // when a follow-up sequence email is sent to a lead who already opened the first).

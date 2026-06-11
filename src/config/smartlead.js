@@ -222,11 +222,36 @@ export async function updateCampaignStatus(campaignId, status) {
 }
 
 /**
- * Get campaign statistics.
+ * Get campaign statistics — one row per individual email send (including follow-ups),
+ * with lead_email, sequence_number, sent_time and engagement flags.
+ * Paginates through all pages and returns the flattened array of records.
  */
 export async function getCampaignStatistics(campaignId) {
-  const { ok, data } = await smartleadFetch(`/campaigns/${campaignId}/statistics`);
-  return ok ? data : null;
+  const PAGE = 100;
+  const all = [];
+  let offset = 0;
+  let loggedShape = false;
+
+  for (let guard = 0; guard < 1000; guard++) {
+    const { ok, data } = await smartleadFetch(
+      `/campaigns/${campaignId}/statistics?offset=${offset}&limit=${PAGE}`
+    );
+    if (!ok || !data) break;
+
+    // Response envelope is { ok, data: [...], total_stats } — but log it once so we can
+    // confirm the exact field names against live data the first time this runs.
+    if (!loggedShape) {
+      console.log(`[smartlead] statistics envelope for ${campaignId}:`, JSON.stringify(data).slice(0, 500));
+      loggedShape = true;
+    }
+
+    const page = Array.isArray(data) ? data : (data.data ?? []);
+    all.push(...page);
+    if (page.length < PAGE) break;
+    offset += PAGE;
+  }
+
+  return all;
 }
 
 /**

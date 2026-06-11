@@ -16,6 +16,7 @@ import {
   getCampaigns as slGetCampaigns,
 } from '../config/smartlead.js';
 import { resolveSmartleadSender } from '../employees/email_campaign_manager/helpers/resolve_smartlead_sender.js';
+import { reconcileCampaignSends } from '../lib/smartlead/reconcile_sends.js';
 
 const router = express.Router();
 
@@ -886,6 +887,37 @@ router.post('/reregister-webhooks', async (req, res) => {
   }
 
   res.json({ reregistered: results.length, results });
+});
+
+// POST /api/admin/reconcile-sends
+// Pulls the Smartlead statistics API to recover follow-up sends that never fired an
+// EMAIL_SENT webhook. Runs for all campaigns, or a single one via body.campaign_id.
+router.post('/reconcile-sends', async (req, res) => {
+  const supabase = await requireSuperAdmin(req, res);
+  if (!supabase) return;
+
+  const { campaign_id } = req.body;
+
+  const query = supabase
+    .from('campaigns')
+    .select('id, name, smartlead_campaign_id')
+    .not('smartlead_campaign_id', 'is', null);
+  if (campaign_id) query.eq('id', campaign_id);
+
+  const { data: campaigns, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+
+  const results = [];
+  for (const c of campaigns ?? []) {
+    try {
+      const summary = await reconcileCampaignSends(c.id);
+      results.push({ campaign: c.name, ...summary });
+    } catch (err) {
+      results.push({ campaign: c.name, sl_id: c.smartlead_campaign_id, error: err.message });
+    }
+  }
+
+  res.json({ reconciled: results.length, results });
 });
 
 export default router;
