@@ -4,6 +4,7 @@ import { attachEmailAccount, updateCampaignStatus, saveSequences } from '../conf
 import { resolveSmartleadSender } from '../employees/email_campaign_manager/helpers/resolve_smartlead_sender.js';
 import { dispatchSkill } from '../employees/index.js';
 import { fixSequenceDelays } from '../utils/sequence.js';
+import { reconcileCampaignSends } from '../lib/smartlead/reconcile_sends.js';
 
 const router = express.Router();
 
@@ -185,6 +186,27 @@ router.post('/find-leads', async (req, res) => {
     itp_id: campaign.itp_id,
     campaign_id,
   }).catch(err => console.error('[find-leads] dispatch error:', err));
+});
+
+/**
+ * POST /api/campaigns/reconcile-sends
+ * Pull the latest send data from Smartlead's statistics API for a single campaign.
+ * Backs the Draper kanban refresh button so a manual refresh picks up follow-up sends
+ * (which Smartlead never webhooks) on demand, not just on the hourly cron.
+ */
+router.post('/reconcile-sends', async (req, res) => {
+  const { campaign_id } = req.body;
+  if (!campaign_id) {
+    return res.status(400).json({ error: 'campaign_id required' });
+  }
+
+  try {
+    const summary = await reconcileCampaignSends(campaign_id);
+    res.json({ success: true, ...summary });
+  } catch (err) {
+    console.error('[reconcile-sends] Error:', err);
+    res.status(500).json({ error: 'Internal error', detail: err.message });
+  }
 });
 
 export default router;
