@@ -56,8 +56,8 @@ export async function reconcileCampaignSends(campaignId) {
   const seen = new Set((existing ?? []).map(e => `${e.contact_id}:${e.sequence_number}`));
 
   const toInsert = [];
-  const maxSeqByContact = new Map();   // contact_id -> highest sequence seen
-  const repliedContacts = new Set();   // contacts with at least one replied send
+  const maxSeqByContact = new Map();    // contact_id -> highest sequence seen
+  const latestSentByContact = new Map(); // contact_id -> most recent send timestamp
 
   for (const r of records) {
     const email = (r.lead_email ?? '').toLowerCase();
@@ -67,6 +67,8 @@ export async function reconcileCampaignSends(campaignId) {
     const seq = Number(r.sequence_number) || null;
     if (seq == null) continue; // can't dedup or place a send without a sequence number
 
+    const sentTime = r.sent_time ?? r.sent_at ?? null;
+
     const key = `${contactId}:${seq}`;
     if (!seen.has(key)) {
       seen.add(key);
@@ -75,13 +77,20 @@ export async function reconcileCampaignSends(campaignId) {
         contact_id: contactId,
         event_type: 'sent',
         sequence_number: seq,
-        event_at: r.sent_time ?? r.sent_at ?? null,
+        event_at: sentTime,
       });
     }
 
     const prevMax = maxSeqByContact.get(contactId) ?? 0;
     if (seq > prevMax) maxSeqByContact.set(contactId, seq);
-    if (r.is_replied) repliedContacts.add(contactId);
+
+    // Track the most recent send time so the card shows when the lead was last emailed
+    if (sentTime) {
+      const prevLatest = latestSentByContact.get(contactId);
+      if (!prevLatest || new Date(sentTime) > new Date(prevLatest)) {
+        latestSentByContact.set(contactId, sentTime);
+      }
+    }
   }
 
   // Insert missing send events
@@ -101,7 +110,7 @@ export async function reconcileCampaignSends(campaignId) {
   if (contactIds.length) {
     const { data: ccRows } = await supabase
       .from('campaign_contacts')
-      .select('contact_id, status, current_sequence')
+      .select('contact_id, status, current_sequence, sent_at')
       .eq('campaign_id', campaignId)
       .in('contact_id', contactIds);
     const ccByContact = new Map((ccRows ?? []).map(cc => [cc.contact_id, cc]));
@@ -114,6 +123,13 @@ export async function reconcileCampaignSends(campaignId) {
       const update = {};
 
       if (maxSeq > (cc.current_sequence ?? 0)) update.current_sequence = maxSeq;
+
+      // Set sent_at to the most recent send so the card reflects the last time we
+      // emailed the lead (webhook only ever recorded the first send).
+      const latestSent = latestSentByContact.get(contactId);
+      if (latestSent && (!cc.sent_at || new Date(latestSent) > new Date(cc.sent_at))) {
+        update.sent_at = latestSent;
+      }
 
       // Bump status to at least 'sent' — but never overwrite a more advanced state.
       // (We don't promote to 'replied' here; replies are owned by the webhook so the
