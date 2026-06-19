@@ -4,6 +4,40 @@ function getApiKey() {
   return process.env.SMARTSENDERS_API_KEY ?? process.env.SMARTLEAD_API_KEY;
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Mock mode
+// Enable with PROVISIONING_MOCK=true to dry-run the full provisioning flow
+// without touching SmartSenders (no charges). Order completes after
+// PROVISIONING_MOCK_DELAY_MS (default 60s) so the poller can observe the
+// PENDING → PROVISIONING → ACTIVE transition realistically.
+// ──────────────────────────────────────────────────────────────────────────
+function isMock() {
+  return process.env.PROVISIONING_MOCK === 'true' || process.env.PROVISIONING_MOCK === '1';
+}
+
+const MOCK_DELAY_MS = () => parseInt(process.env.PROVISIONING_MOCK_DELAY_MS ?? '60000', 10);
+const MOCK_ORDERS = new Map(); // order_id → { createdAt, payload }
+
+const MOCK_VENDORS = [
+  { id: 'mock-namecheap', name: 'Namecheap (Mock)', price: 4.50, pre_warmed_price: 9.00 },
+  { id: 'mock-godaddy',   name: 'GoDaddy (Mock)',   price: 5.00, pre_warmed_price: 9.50 },
+];
+
+function mockMailboxes(domain, mailboxes) {
+  return (mailboxes ?? []).map((m, i) => ({
+    email: `${m.prefix ?? `${m.first_name}.${m.last_name}`.toLowerCase()}@${domain}`,
+    first_name: m.first_name,
+    last_name: m.last_name,
+    smtp_host: 'smtp.mock.smartsenders.dev',
+    smtp_port: 587,
+    smtp_username: `${m.prefix ?? `${m.first_name}.${m.last_name}`.toLowerCase()}@${domain}`,
+    smtp_password: `mock-pw-${i}-do-not-use`,
+    imap_host: 'imap.mock.smartsenders.dev',
+    imap_port: 993,
+    smartlead_email_account_id: null,
+  }));
+}
+
 async function smartsendersFetch(path, options = {}) {
   const apiKey = getApiKey();
   if (!apiKey) {
@@ -46,6 +80,10 @@ async function smartsendersFetch(path, options = {}) {
  * Used to verify API entitlement and pick a default vendor.
  */
 export async function getVendors() {
+  if (isMock()) {
+    console.log('[smartsenders] MOCK: returning fake vendor list');
+    return MOCK_VENDORS;
+  }
   const { ok, data } = await smartsendersFetch('/vendors');
   if (!ok) return [];
   return Array.isArray(data) ? data : data?.vendors ?? data?.data ?? [];
@@ -64,7 +102,7 @@ export async function getVendors() {
  * @returns {Promise<{ok: boolean, order_id?: string, raw: object}>}
  */
 export async function placeOrder({ vendor_id, domain, forwarding_domain, mailboxes, user_details, pre_warmed = false }) {
-  console.log(`[smartsenders] Placing order: domain=${domain}, mailboxes=${mailboxes?.length}, vendor=${vendor_id}`);
+  console.log(`[smartsenders] Placing order: domain=${domain}, mailboxes=${mailboxes?.length}, vendor=${vendor_id}${isMock() ? ' [MOCK]' : ''}`);
   const payload = {
     vendor_id,
     domain,
@@ -77,6 +115,19 @@ export async function placeOrder({ vendor_id, domain, forwarding_domain, mailbox
     user_details,
     pre_warmed,
   };
+
+  if (isMock()) {
+    const order_id = `mock_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+    MOCK_ORDERS.set(order_id, { createdAt: Date.now(), payload });
+    console.log(`[smartsenders] MOCK: order ${order_id} placed; will complete in ~${MOCK_DELAY_MS() / 1000}s`);
+    return {
+      ok: true,
+      status: 200,
+      order_id,
+      raw: { mock: true, order_id, status: 'pending', message: 'Mock order accepted' },
+    };
+  }
+
   const { ok, data, status } = await smartsendersFetch('/place-order', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -87,11 +138,37 @@ export async function placeOrder({ vendor_id, domain, forwarding_domain, mailbox
 
 /**
  * Get the status of a SmartSenders order.
- * Returned shape (best guess until verified):
- *   { status: 'pending'|'processing'|'completed'|'failed',
- *     domain, mailboxes: [{ email, smartlead_email_account_id?, smtp_host?, smtp_port?, smtp_password?, imap_host?, imap_port? }] }
  */
 export async function getOrderStatus(orderId) {
+  if (isMock()) {
+    const stored = MOCK_ORDERS.get(orderId);
+    // If the server restarted we'll have no record — synthesise "processing" so the
+    // poller keeps polling; it'll stall out at 48h like the real flow.
+    if (!stored) {
+      console.log(`[smartsenders] MOCK: no record for ${orderId}, returning processing`);
+      return { ok: true, status: 200, raw: { mock: true, status: 'processing', order_id: orderId } };
+    }
+    const elapsed = Date.now() - stored.createdAt;
+    if (elapsed < MOCK_DELAY_MS()) {
+      return {
+        ok: true, status: 200,
+        raw: { mock: true, status: 'processing', order_id: orderId, elapsed_ms: elapsed },
+      };
+    }
+    // Completed — return synthesised mailbox payload
+    const mailboxes = mockMailboxes(stored.payload.domain, stored.payload.mailboxes);
+    console.log(`[smartsenders] MOCK: order ${orderId} completed (${mailboxes.length} mailboxes)`);
+    return {
+      ok: true, status: 200,
+      raw: {
+        mock: true,
+        status: 'completed',
+        order_id: orderId,
+        domain: stored.payload.domain,
+        mailboxes,
+      },
+    };
+  }
   const { ok, data, status } = await smartsendersFetch(`/orders/${encodeURIComponent(orderId)}`);
   return { ok, status, raw: data };
 }
@@ -100,6 +177,7 @@ export async function getOrderStatus(orderId) {
  * Health/ping check — returns true if the API key is accepted on SmartSenders.
  */
 export async function ping() {
+  if (isMock()) return { ok: true, status: 200, mock: true };
   const { ok, status } = await smartsendersFetch('/vendors');
   return { ok, status };
 }

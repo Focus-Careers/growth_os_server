@@ -9,7 +9,9 @@ import { getSupabaseAdmin } from '../config/supabase.js';
 import { getOrderStatus } from '../config/smartsenders.js';
 import { createEmailAccount, getEmailAccounts } from '../config/smartlead.js';
 
-const POLL_SCHEDULE = '*/30 * * * *'; // every 30 min
+// Default every 30 min in prod. Override with PROVISIONING_POLL_SCHEDULE for dev,
+// e.g. '*/30 * * * * *' for every 30 seconds (node-cron supports 6-field syntax).
+const POLL_SCHEDULE = process.env.PROVISIONING_POLL_SCHEDULE ?? '*/30 * * * *';
 const STALL_MS = 48 * 60 * 60 * 1000; // 48h → PROVISIONING_STALLED
 
 export function initProvisioningPoller() {
@@ -124,7 +126,8 @@ async function processOrder(order, admin) {
     return false;
   }
 
-  const senderIds = await createSendersFromMailboxes(order, mailboxes, admin);
+  const isMockPayload = raw?.mock === true;
+  const senderIds = await createSendersFromMailboxes(order, mailboxes, admin, { skipSmartlead: isMockPayload });
 
   await admin.from('provisioning_orders').update({
     state: 'ACTIVE',
@@ -140,7 +143,7 @@ async function processOrder(order, admin) {
   return true;
 }
 
-async function createSendersFromMailboxes(order, mailboxes, admin) {
+async function createSendersFromMailboxes(order, mailboxes, admin, { skipSmartlead = false } = {}) {
   const created = [];
   // Pre-fetch existing Smartlead accounts once to avoid N round-trips when filling in IDs
   let existingAccounts = null;
@@ -148,6 +151,9 @@ async function createSendersFromMailboxes(order, mailboxes, admin) {
     if (existingAccounts === null) existingAccounts = await getEmailAccounts();
     return existingAccounts;
   };
+  if (skipSmartlead) {
+    console.log(`[provisioning/poller] MOCK order ${order.id}: skipping Smartlead createEmailAccount/lookup`);
+  }
 
   for (const mb of mailboxes) {
     const email = (mb.email ?? mb.from_email ?? mb.address ?? '').toLowerCase().trim();
@@ -181,7 +187,7 @@ async function createSendersFromMailboxes(order, mailboxes, admin) {
       imap_port:     mb.imap_port     ?? mb.imap?.port     ?? 993,
     };
 
-    if (!slEmailAccountId && smtp.smtp_host && smtp.smtp_password) {
+    if (!slEmailAccountId && !skipSmartlead && smtp.smtp_host && smtp.smtp_password) {
       const newAcct = await createEmailAccount({
         from_name: `${mb.first_name ?? ''} ${mb.last_name ?? ''}`.trim() || email,
         from_email: email,
@@ -196,7 +202,7 @@ async function createSendersFromMailboxes(order, mailboxes, admin) {
       if (newAcct?.id) slEmailAccountId = String(newAcct.id);
     }
 
-    if (!slEmailAccountId) {
+    if (!slEmailAccountId && !skipSmartlead) {
       const accounts = await ensureExisting();
       const match = accounts.find(a => (a.from_email ?? '').toLowerCase() === email);
       if (match) slEmailAccountId = String(match.id);
