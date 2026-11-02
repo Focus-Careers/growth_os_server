@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getOpenAI } from '../../config/openai.js';
+import { MODELS } from '../../config/models.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -84,7 +85,7 @@ export async function classifyLiveness({ url, scraped, directory_whitelist = [] 
   let response;
   try {
     response = await getOpenAI().chat.completions.create({
-      model: 'gpt-5-mini',
+      model: MODELS.standard,
       max_completion_tokens: 512,
       messages: [{ role: 'user', content: `${prompt}\n\n${content}` }],
     });
@@ -173,7 +174,7 @@ async function _classifyBatch(items, directory_whitelist) {
   let response;
   try {
     response = await getOpenAI().chat.completions.create({
-      model: 'gpt-5-mini',
+      model: MODELS.standard,
       max_completion_tokens: Math.min(4096, items.length * 400),
       messages: [{ role: 'user', content: filled }],
     });

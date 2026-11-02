@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getOpenAI } from '../../config/openai.js';
+import { MODELS } from '../../config/models.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { dispatchSkill } from '../../employees/index.js';
 
@@ -98,7 +99,7 @@ export async function analyseAndGreet(user_details_id) {
   const firstName = ud.firstname ?? 'there';
 
   const response = await getOpenAI().chat.completions.create({
-    model: 'gpt-5-mini', // was gpt-5-nano — user-facing greeting, nano too weak
+    model: MODELS.standard, // was gpt-5-nano — user-facing greeting, nano too weak
     max_completion_tokens: 256,
     messages: [
       { role: 'system', content: prompt },

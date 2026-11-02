@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getOpenAI } from '../../../../config/openai.js';
+import { MODELS } from '../../../../config/models.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 
@@ -42,7 +43,7 @@ export async function executeSkill({ organisation_name, organisation_website, de
   }
 
   const response = await getOpenAI().chat.completions.create({
-    model: 'gpt-5',
+    model: MODELS.deep,
     max_completion_tokens: 1024,
     messages: [{ role: 'user', content: `${prompt}\n\n${userMessage}` }],
   });

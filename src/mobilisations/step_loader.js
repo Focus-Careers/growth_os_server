@@ -11,6 +11,7 @@ import { dirname, join } from 'path';
 import yaml from 'js-yaml';
 import { checks } from './checks.js';
 import { getOpenAI } from '../config/openai.js';
+import { MODELS } from '../config/models.js';
 import { getSupabaseAdmin } from '../config/supabase.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -96,7 +97,7 @@ export async function getStepFromFlow(mobilisationName, stepId, value = null, us
     const promptPath = join(__dirname, mobilisationName, step.prompt_file);
     const prompt = await readFile(promptPath, 'utf-8');
     const response = await getOpenAI().chat.completions.create({
-      model: 'gpt-5-mini', // was gpt-5-nano — generates user-facing step/option messages
+      model: MODELS.standard, // was gpt-5-nano — generates user-facing step/option messages
       max_completion_tokens: 256,
       messages: [{ role: 'user', content: prompt }],
     });

@@ -1,4 +1,5 @@
 import { getOpenAI } from '../../config/openai.js';
+import { MODELS } from '../../config/models.js';
 
 const SYSTEM_PROMPT = `You are classifying email replies to cold outreach campaigns.
 
@@ -18,7 +19,7 @@ Respond with ONLY the classification word. No explanation.`;
 export async function classifyReply(replyBody) {
   try {
     const response = await getOpenAI().chat.completions.create({
-      model: 'gpt-5-mini',
+      model: MODELS.standard,
       max_completion_tokens: 16,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },

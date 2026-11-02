@@ -1,4 +1,5 @@
 import { getOpenAI } from '../../config/openai.js';
+import { MODELS } from '../../config/models.js';
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -38,7 +39,7 @@ export async function processSignup(req, res) {
     const claudeMessages = formatMessagesForClaude(messages);
 
     const response = await getOpenAI().chat.completions.create({
-      model: 'gpt-5-mini',
+      model: MODELS.standard,
       max_completion_tokens: 256,
       messages: [{ role: 'system', content: systemPrompt }, ...claudeMessages],
     });

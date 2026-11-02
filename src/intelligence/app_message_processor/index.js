@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { getOpenAI } from '../../config/openai.js';
+import { MODELS } from '../../config/models.js';
 import { sendDirectResponse } from '../app_message_sender/index.js';
 import { stopForUser } from '../../lib/stop.js';
 
@@ -194,7 +195,7 @@ export async function processMessage(record) {
   // literally cannot emit malformed JSON, so a parse failure can no longer
   // silently misroute a real intent into direct_response.
   const routeRequest = {
-    model: 'gpt-5-mini',
+    model: MODELS.standard,
     reasoning_effort: 'medium', // routing is a judgement call; default global is 'low'
     max_completion_tokens: 4096, // floored to 8192 in config/openai.js for reasoning headroom; JSON output itself is tiny
     system: systemPrompt,

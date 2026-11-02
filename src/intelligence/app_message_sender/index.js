@@ -7,6 +7,7 @@
 
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { getOpenAI } from '../../config/openai.js';
+import { MODELS } from '../../config/models.js';
 import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -55,7 +56,7 @@ export async function sendDirectResponse({ user_details_id, conversationHistory 
     const directResponsePrompt = await readFile(join(__dirname, 'direct_response.md'), 'utf-8');
 
     const response = await callLLM({
-      model: 'gpt-5-mini',
+      model: MODELS.standard,
       max_completion_tokens: 512,
       system: directResponsePrompt,
       messages: [{ role: 'user', content: conversationHistory }],
@@ -92,7 +93,7 @@ export async function sendAppMessage({ type, employee, skill, user_details_id, s
     // Was gpt-5-nano — too weak for this nuanced, highly visible job (broken
     // phrasing, miscounted/duplicated figures). Upgraded to gpt-5-mini.
     const response = await callLLM({
-      model: 'gpt-5-mini',
+      model: MODELS.standard,
       max_completion_tokens: 1024,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],

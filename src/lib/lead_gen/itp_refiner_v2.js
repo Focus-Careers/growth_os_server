@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getOpenAI } from '../../config/openai.js';
+import { MODELS } from '../../config/models.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { clearQueryProfileCache } from './query_generator.js';
 
@@ -85,7 +86,7 @@ export async function refineItp({ itp_id, user_feedback }) {
   let response;
   try {
     response = await getOpenAI().chat.completions.create({
-      model: 'gpt-5-mini',
+      model: MODELS.standard,
       max_completion_tokens: 1024,
       messages: [{ role: 'user', content: `${prompt}\n\nContext:\n${JSON.stringify(context, null, 2)}` }],
     });

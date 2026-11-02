@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getOpenAI } from '../../config/openai.js';
+import { MODELS } from '../../config/models.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -105,7 +106,7 @@ export async function scoreCandidate({ itp, account, evidence, confirmed_positiv
   let response;
   try {
     response = await getOpenAI().chat.completions.create({
-      model: 'gpt-5-mini',
+      model: MODELS.standard,
       max_completion_tokens: 512,
       messages: [{ role: 'user', content: filled }],
     });
@@ -190,7 +191,7 @@ export async function scoreCandidatesBatch({ itp, account, candidates, confirmed
   let response;
   try {
     response = await getOpenAI().chat.completions.create({
-      model:                 'gpt-5-mini',
+      model:                 MODELS.standard,
       max_completion_tokens: 100 * candidates.length,
       messages:              [{ role: 'user', content: filled }],
     });

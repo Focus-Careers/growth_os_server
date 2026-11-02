@@ -1,4 +1,5 @@
 import { getOpenAI } from '../../../../config/openai.js';
+import { MODELS } from '../../../../config/models.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 
@@ -6,7 +7,7 @@ const APOLLO_BASE_URL = 'https://api.apollo.io/v1';
 
 async function getDecisionMakerTitles(itpDemographic) {
   const response = await getOpenAI().chat.completions.create({
-    model: 'gpt-5-nano',
+    model: MODELS.fast,
     max_completion_tokens: 256,
     messages: [{
       role: 'user',
