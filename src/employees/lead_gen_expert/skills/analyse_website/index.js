@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import * as cheerio from 'cheerio';
 import { getOpenAI } from '../../../../config/openai.js';
+import { MODELS } from '../../../../config/models.js';
 import { getSupabaseAdmin } from '../../../../config/supabase.js';
 import { processSkillOutput } from '../../../../intelligence/skill_output_processor/index.js';
 import { fetchWithPuppeteer } from '../../../../config/puppeteer_fallback.js';
@@ -145,7 +146,7 @@ export async function executeSkill({ website, user_details_id }) {
   }
 
   const message = await getOpenAI().chat.completions.create({
-    model: 'gpt-5',
+    model: MODELS.deep,
     max_completion_tokens: 1024,
     messages: [
       {

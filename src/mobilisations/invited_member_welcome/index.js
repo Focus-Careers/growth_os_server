@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { getOpenAI } from '../../config/openai.js';
+import { MODELS } from '../../config/models.js';
 
 async function broadcastTyping(supabase, user_details_id, typing) {
   await supabase.channel(`user:${user_details_id}`).send({
@@ -53,7 +54,7 @@ Context:
 ${contextLines}`;
 
     const response = await getOpenAI().chat.completions.create({
-      model: 'gpt-5-nano',
+      model: MODELS.fast,
       max_completion_tokens: 300,
       messages: [{ role: 'user', content: prompt }],
     });

@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getOpenAI } from '../../config/openai.js';
+import { MODELS } from '../../config/models.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -63,7 +64,7 @@ export async function generatePepperSummary(account_id, firstname, user_details_
   ].join('\n');
 
   const response = await getOpenAI().chat.completions.create({
-    model: 'gpt-5-nano',
+    model: MODELS.fast,
     max_completion_tokens: 256,
     messages: [
       { role: 'system', content: prompt },

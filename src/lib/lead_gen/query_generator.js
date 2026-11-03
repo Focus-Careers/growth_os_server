@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getOpenAI } from '../../config/openai.js';
+import { MODELS } from '../../config/models.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -98,7 +99,7 @@ export async function generateQueryProfile({ itp, account, force = false, mode =
   };
 
   const response = await getOpenAI().chat.completions.create({
-    model: 'gpt-5-mini',
+    model: MODELS.standard,
     max_completion_tokens: 2048,
     messages: [
       { role: 'user', content: `${prompt}\n\n${JSON.stringify(context, null, 2)}` },

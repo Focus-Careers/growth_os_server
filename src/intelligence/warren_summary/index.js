@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getOpenAI } from '../../config/openai.js';
+import { MODELS } from '../../config/models.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -76,7 +77,7 @@ export async function generateWarrenSummary(account_id, firstname) {
   }
 
   const response = await getOpenAI().chat.completions.create({
-    model: 'gpt-5-nano',
+    model: MODELS.fast,
     max_completion_tokens: 256,
     messages: [
       { role: 'system', content: prompt },
