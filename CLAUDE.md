@@ -1,36 +1,30 @@
-# Automated Mailbox Provisioning via SmartSenders
+# growth_os_server
 
-Full-stack feature enabling automatic domain registration, mailbox creation, and warmup through SmartSenders API integration. Includes provisioning workflow, multi-sender campaign support, and production-ready UI components with real-time status tracking.
+The GrowthOS API: Express on Node, hosted on Railway. It runs Watson's chat routing, the scripted flows (`src/mobilisations/`), the AI employees' skills (`src/employees/`), lead generation, Smartlead sync, webhooks and cron jobs.
 
-## Features
+## Read the wiki first
 
-- **SmartSenders API wrapper** — 0.5-1.5 hrs (high risk) — Simple wrapper but depends on resolving API entitlement and credential handling unknowns
-- **Database migrations and schema changes** — 1-2 hrs (medium risk) — Multiple table changes with junction table and state machine fields - integration with existing schema
-- **Domain suggestion and persona utilities** — 0.5-1 hrs (low risk) — Straightforward string manipulation and generation logic
-- **Provisioning API endpoints** — 1-2.5 hrs (medium risk) — 4 endpoints with validation, error handling, and integration with existing auth patterns
-- **Provisioning poller worker** — 2-4 hrs (high risk) — Complex async state machine with 24-48h polling cycle, heavily dependent on API payload format
-- **Multi-sender campaign support** — 1.5-3 hrs (medium risk) — Requires modifying existing sync_to_smartlead logic and junction table relationships
-- **useProvisioning React hook** — 0.5-1.5 hrs (low risk) — Standard React data fetching with real-time updates via Supabase
-- **Provisioning wizard UI** — 3-5 hrs (medium risk) — Production-ready 4-step flow with async status tracking, polish required for core value prop
-- **Campaign multi-sender UI** — 2-4 hrs (medium risk) — Extending large CampaignManager component, sender pills, capacity indicators - production quality
-- **Suppression/unsubscribe table** — 0.5-1.5 hrs (low risk) — Straightforward table creation and pre-send validation logic
+The GrowthOS wiki in Notion is the source for how and why the product works:
+https://app.notion.com/p/40dcea71a7918198b954fd24fc9f870e
 
-### Risks
-- SmartSenders API may require special entitlement beyond standard API access - potential project blocker
-- Order completion payload format unknown - could require significant poller architecture changes if SMTP credentials not included
-- SmartSenders API edge cases likely underdocumented based on Smartlead track record - budget for trial-and-error discovery
-- Complex state machine polling over 24-48h cycle with potential failure modes that are hard to test locally
-- Extending 800-line CampaignManager component increases risk of breaking existing functionality
-### Start with
-SmartSenders API wrapper - resolves the critical unknowns around API entitlement and credential handling that affect the entire project architecture
-### Time estimates
-- Optimistic: 10.2h (1.3 days)
-- Realistic: 16.9h (2.1 days)
-- Pessimistic: 31.5h (3.9 days)
+Most useful pages for this repo:
+- Start Here: https://app.notion.com/p/40dcea71a79181d89a7ef6658081dc82
+- Repos and Code Map: https://app.notion.com/p/40dcea71a7918147a02aeb465a2e5c38
+- Chat, Mobilisations and Skills: https://app.notion.com/p/40dcea71a791817c9bace8004e25b750
+- Lead Generation Pipeline: https://app.notion.com/p/40dcea71a7918162a74bc05aa2e08334
+- Email Sending and Tracking: https://app.notion.com/p/40dcea71a79181a0a346da022cc47a04
+- Environment Variables: https://app.notion.com/p/40dcea71a791812f93a0ef07a0f45ab4
+- Decisions: https://app.notion.com/p/40dcea71a79181e08a91d891bb1d773f
 
-## Scoper Integration
+## Working rules
 
-This project is tracked by Scoper. Development activity is automatically logged via hooks.
-
-- Project key: scoper_492acbfa2e724a50
-- Endpoint: http://localhost:5173/api/hooks/task
+- A push to `main` deploys to production on Railway. Work on a branch and merge only when checked.
+- There is no staging environment. Local development uses the production Supabase project, so every write is real.
+- A local server starts the cron jobs (hourly send reconciliation and scheduled target-finder runs) against production. Stop it when you are not using it.
+- Never point `WEBHOOK_BASE_URL` at your machine while syncing campaigns or re-registering webhooks: it re-points production Smartlead webhooks.
+- The server runs as one instance. Cron schedules and the Stop registry live in memory.
+- There are no automated tests. Check changes by hand before merging.
+- Never commit `.env` files or print secret values. Variable names are listed on the Environment Variables page.
+- Model names live in `src/config/models.js` and can be overridden by environment variables. Change models there, not at call sites.
+- Database migrations live in the growth_os_app repo (`supabase/migrations`), not here.
+- When behaviour changes, update the matching wiki page and its "Last checked" date.
